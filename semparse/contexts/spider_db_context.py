@@ -38,7 +38,19 @@ class SpiderDBContext:
         self.db_id = db_id
         self.utterance = utterance
 
+        # lemma is the basic form of a word, 
+        # for example the singular form of a noun or the infinitive form of a verb, 
+        # as it is shown at the beginning of a dictionary entry 
         tokenized_utterance = tokenizer.tokenize(utterance.lower())
+
+        # For example: if the utterance.lower() = ['biggest', 'departments']
+        # tokenized_utterance will be [token_from_('biggest'), token_from_('departments')]
+        # And token_from_('biggest').text = 'biggest', token_from_('biggest').lemma_ = 'big';
+        # And token_from_('departments').text = 'departments', token_from_('departments').lemma_ = 'department';
+        
+        # the obj Token is similar to the obj in tokenized_utterance but not the same.
+        # And the here, we take only a part of data from original tokenized_utterance.
+        # So the Token obj is a simplified version of the obj in tokenized_utterance
         self.tokenized_utterance = [Token(text=t.text, lemma=t.lemma_) for t in tokenized_utterance]
 
         if db_id not in SpiderDBContext.schemas:
@@ -61,6 +73,9 @@ class SpiderDBContext:
         else:
             column_type = column.column_type
         return f"column:{column_type.lower()}:{table_name.lower()}:{column.name.lower()}"
+
+
+
 
     def get_db_knowledge_graph(self, db_id: str) -> KnowledgeGraph:
         entities: Set[str] = set()
@@ -86,13 +101,20 @@ class SpiderDBContext:
                         column_key = self.entity_key_for_column(table.name, column)
                         string_column_mapping[cell_value_normalized].add(column_key)
 
+        # string_entities because it only search the text column data.
+        # string_entities is the column information that its value appearing in the question.
         string_entities = self.get_entities_from_question(string_column_mapping)
 
+        # table.text|column.text -> table or column name
+        # table_key  -> 'table':table.text
+        # entity_key -> 'column':column_type:table.text:column.text
+        # entities   ->  set of table_key and entity_key
+        # entity_text->  dict of {table_key:table.text} and {entity_key:column.text}
+        # neighbors  ->  dict of {entity_key:table.text} and {table_key:{all its column.text}}
         for table in tables:
             table_key = f"table:{table.name.lower()}"
             entities.add(table_key)
             entity_text[table_key] = table.text
-
             for column in db_schema[table.name].columns:
                 entity_key = self.entity_key_for_column(table.name, column)
                 entities.add(entity_key)
@@ -100,6 +122,13 @@ class SpiderDBContext:
                 neighbors[table_key].add(entity_key)
                 entity_text[entity_key] = column.text
 
+        # token_in_utterance-> the token in utterance that appear in the data of database
+        # string_entity     -> type:token_in_utterance. type is only 'string' here.
+        # column_keys       -> list of entity_key
+        # column_key        -> entity_key
+        # Now, entities     -> set of table_key and entity_key and string_entity
+        # Now, entity_text  -> dict of {table_key:table.text} and {entity_key:column.text}
+        # Now, neighbors    -> Plus: {string_entity:all its entity_key} and {entity_key:table.text and string_entity (if it has)} and {table_key:{all its column.text}}
         for string_entity, column_keys in string_entities:
             entities.add(string_entity)
             for column_key in column_keys:
@@ -151,6 +180,14 @@ class SpiderDBContext:
 
     def get_entities_from_question(self,
                                    string_column_mapping: Dict[str, set]) -> List[Tuple[str, str]]:
+        """
+        An entity is any object in the system that we want to model and store information about.
+        But here is get the column name from question. For example, if the question is: "get all information of jack"
+        Supposing the table in database is:{id,name,salary} and we can find 'jack' from the 'name' column.
+        So we can get the column 'name' from the question because there is 'jack' in both the question and table data.
+        It will return the column list.
+        """
+
         entity_data = []
         for i, token in enumerate(self.tokenized_utterance):
             token_text = token.text
@@ -213,7 +250,7 @@ class SpiderDBContext:
         string = string.replace("\\n", "_")
         string = re.sub("\\s+", " ", string)
         # Canonicalization rules from Sempre.
-        string = re.sub("[^\\w]", "_", string)
+        string = re.sub("[^\\w]", "_", string) # replace all non word(a-z) with "_"
         string = re.sub("_+", "_", string)
         string = re.sub("_$", "", string)
         return unidecode(string.lower())

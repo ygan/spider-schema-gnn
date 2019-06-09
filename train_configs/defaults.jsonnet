@@ -1,9 +1,10 @@
-local dataset_path = "dataset/";
+local dataset_path = "/home/yj/python/Github/bilayerSQL/data/spider/";
 
 {
   "random_seed": 5,
   "numpy_seed": 5,
   "pytorch_seed": 5,
+
   "dataset_reader": {
     "type": "spider",
     "tables_file": dataset_path + "tables.json",
@@ -12,6 +13,7 @@ local dataset_path = "dataset/";
     "keep_if_unparsable": false,
     "loading_limit": -1
   },
+
   "validation_dataset_reader": {
     "type": "spider",
     "tables_file": dataset_path + "tables.json",
@@ -20,10 +22,17 @@ local dataset_path = "dataset/";
     "keep_if_unparsable": true,
     "loading_limit": -1
   },
+
   "train_data_path": dataset_path + "train_spider.json",
   "validation_data_path": dataset_path + "dev.json",
+
+
+
+
+
+
   "model": {
-    "type": "spider",
+    "type": "spider2",
     "dataset_path": dataset_path,
     "parse_sql_on_decoding": true,
     "gnn": true,
@@ -60,14 +69,23 @@ local dataset_path = "dataset/";
     "past_attention": {"type": "dot_product"},
     "dropout": 0.5
   },
+
+
+
+
+
   "iterator": {
     "type": "basic",
     "batch_size" : 15
   },
+
+
   "validation_iterator": {
     "type": "basic",
     "batch_size" : 1
   },
+
+
   "trainer": {
     "num_epochs": 100,
     "cuda_device": 0,
@@ -79,4 +97,6 @@ local dataset_path = "dataset/";
     },
     "num_serialized_models_to_keep": 2
   }
+
+
 }

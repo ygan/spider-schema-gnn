@@ -1,0 +1,8 @@
+/data/
+*.pyc
+.idea
+*.swp
+.DS_Store
+/.vscode/
+*.pt
+/cache/

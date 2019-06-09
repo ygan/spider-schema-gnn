@@ -29,9 +29,16 @@ class SpiderDatasetReader(DatasetReader):
                  keep_if_unparsable: bool = True,
                  tables_file: str = None,
                  dataset_path: str = 'dataset/database',
-                 load_cache: bool = True,
-                 save_cache: bool = True,
+                 load_cache: bool = False,
+                 save_cache: bool = False,
                  loading_limit = -1):
+        
+        """
+        loading_limit:
+            if this is 50, the reader will only load 50 instance from the file or cache for fast debugging
+            if this is -1, it will load all data.
+        """
+
         super().__init__(lazy=lazy)
 
         # default spacy tokenizer splits the common token 'id' to ['i', 'd'], we here write a manual fix for that
@@ -39,6 +46,12 @@ class SpiderDatasetReader(DatasetReader):
         spacy_tokenizer.spacy.tokenizer.add_special_case(u'id', [{ORTH: u'id', LEMMA: u'id'}])
         self._tokenizer = WordTokenizer(spacy_tokenizer)
 
+        # Tokens can be represented as single IDs 
+        # (e.g., the word “cat” gets represented by the number 34), 
+        # or as lists of character IDs (e.g., “cat” gets represented by the numbers [23, 10, 18]),
+        # or in some other way that you can come up with 
+        # (e.g., if you have some structured input you want to represent in a special way in your data arrays, you can do that here).
+        # Here use the SingleIdTokenIndexer, which means we will represent the str based on a single int number
         self._utterance_token_indexers = question_token_indexers or {'tokens': SingleIdTokenIndexer()}
         self._keep_if_unparsable = keep_if_unparsable
 
@@ -48,6 +61,8 @@ class SpiderDatasetReader(DatasetReader):
         self._load_cache = load_cache
         self._save_cache = save_cache
         self._loading_limit = loading_limit
+
+        # when finishing the __init__(), it will automatically run the _read()
 
     @overrides
     def _read(self, file_path: str):
@@ -109,7 +124,7 @@ class SpiderDatasetReader(DatasetReader):
                 ins = self.text_to_instance(
                     utterance=ex['question'],
                     db_id=ex['db_id'],
-                    sql=query_tokens)
+                    sql=query_tokens) # query_tokens is ex['query_toks_no_value'] that remove all aliases
                 if ins is not None:
                     cnt += 1
                 if self._save_cache:
@@ -119,7 +134,7 @@ class SpiderDatasetReader(DatasetReader):
                     yield ins
 
     def text_to_instance(self,
-                         utterance: str,
+                         utterance: str, # question
                          db_id: str,
                          sql: List[str] = None):
         fields: Dict[str, Field] = {}
