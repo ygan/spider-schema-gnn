@@ -107,8 +107,8 @@ class SpiderDBContext:
 
         # table.text|column.text -> table or column name
         # table_key  -> 'table':table.text
-        # entity_key -> 'column':column_type:table.text:column.text
-        # entities   ->  set of table_key and entity_key
+        # entity_key -> 'column':column_type:table.text:column.text. column_type can be: 'text', 'number', 'primary', 'foreign'!!!
+        # entities   ->  set of table_key and entity_key. The number of items is number of table + number of columns in each table. Table name + column name.
         # entity_text->  dict of {table_key:table.text} and {entity_key:column.text}
         # neighbors  ->  dict of {entity_key:table.text} and {table_key:{all its column.text}}
         for table in tables:
@@ -127,7 +127,7 @@ class SpiderDBContext:
         # column_keys       -> list of entity_key
         # column_key        -> entity_key
         # Now, entities     -> set of table_key and entity_key and string_entity
-        # Now, entity_text  -> dict of {table_key:table.text} and {entity_key:column.text}
+        # Now, entity_text  -> dict of {table_key:table_names} and {entity_key:column_names}. table_names and column_names come from tables.json. Not table_names_original and column_names_original!!
         # Now, neighbors    -> Plus: {string_entity:all its entity_key} and {entity_key:table.text and string_entity (if it has)} and {table_key:{all its column.text}}
         for string_entity, column_keys in string_entities:
             entities.add(string_entity)
@@ -155,7 +155,44 @@ class SpiderDBContext:
 
                 foreign_keys_to_column[entity_key] = other_entity_key
 
-        kg = KnowledgeGraph(entities, dict(neighbors), entity_text)
+        # if we can not find tokens appearing in both the data of database and token of question:
+        # But even we can find tokens, here still the same.
+        #   1. the length of entities and neighbors and entity_text are all equal to number of table + number of columns in each table
+        #   2. entities is table and column 'name'
+        #   3. neighbors is the relationship for every column and table. For example:
+        #           neighbors[table].items = [all its column name]
+        #           neighbors[column].items = [table_name, relation_column]; 
+        #               if column_1 is a primary key and column_2 and column_3 is foreign keys reference to column_1, neighbors[column_1].items = [column_1's table_name, column_2, column_3]
+        #           neighbors[column_2].items = [column_2's table_name, column_1]
+        #           neighbors[column_3].items = [column_3's table_name, column_1]
+        #           if a column_4 does not have any relation_column, neighbors[column_4].items = [column_4's table_name];
+        #   4. entity_text: dict of {table_key:table_names} and {entity_key:column_names}. table_names and column_names is a readable name different from the original name in database.
+        
+        # if we can find token appearing in both the data of database and token of question:
+        #   1. the length of three objectives are still equal and its value = previous value + number of token found
+        #       So every thing is the same as we can not find the token. The token expand the three objectives and nothing more, Now let's discuss the new data brought by the token.
+        #   2. entities += ['string':token]. We call ['string':token] as type_with_token.
+        #   3. neighbors += {type_with_token:[its columns]}. Supposing the token appearing in question and name_column and previous_name_column. here will be:
+        #           neighbors += {type_with_token:[name_column,previous_name_column]}.
+        #           neighbors[name_column].add(type_with_token), which is from neighbors[name_column] = {name_column's table_name} to neighbors[name_column] = {name_column's table_name, type_with_token}
+        #           neighbors[previous_name_column] do the same process.
+        #           neighbors[name_column] and neighbors[previous_name_column] exist for neighbors even we do not find tokens. But neighbors[type_with_token] only exist when we find tokens.
+        #   4. entity_text +=  {type_with_token: token}
+        
+        # To now, we know how to create a KnowledgeGraph:
+        # entities is node name in a graph.
+        # entity_text is real text for the node. For example, we can call the node as 'column:text:management:temporary_acting', but its text for this node is 'temporary acting'. 
+        #           'temporary acting' copy from column_names in tables.json (not column_names_original). So we will analyse the text only. Node name is just a symbol.
+        # neighbors is the edge in a graph.
+        #           neighbors['node_name'].items=[list of (other) node name ]. Here is absolutely other!
+        #           The edge contain: table-column, foreign-primary, column-token_in_quesion.
+        # Their length is number of node in this graph.
+        kg = KnowledgeGraph(entities, dict(neighbors), entity_text) # node name, edge, node value
+
+        # Add a attribute for kg.
+        # Example data of foreign_keys_to_column generated from table 'department_management'
+        # foreign_keys_to_column['column:foreign:management:department_id'] = 'column:primary:department:department_id'
+        # foreign_keys_to_column['column:foreign:management:head_id'] = 'column:primary:head:head_id'
         kg.foreign_keys_to_column = foreign_keys_to_column
 
         return kg

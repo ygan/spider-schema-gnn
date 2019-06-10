@@ -139,8 +139,13 @@ class SpiderDatasetReader(DatasetReader):
                          sql: List[str] = None):
         fields: Dict[str, Field] = {}
 
+        # db_context is db graph and its tokens
         db_context = SpiderDBContext(db_id, utterance, tokenizer=self._tokenizer,
                                      tables_file=self._tables_file, dataset_path=self._dataset_path)
+
+        # A instance contain many fields and must be filed obj in allennlp. (You can consider fields are columns in table or attribute in obj)
+        # So we need to convert the db_context to a Filed obj which is table_field.
+        # db_context.knowledge_graph is a graph so we need a graph field obj and SpiderKnowledgeGraphField inherit KnowledgeGraphField.
         table_field = SpiderKnowledgeGraphField(db_context.knowledge_graph,
                                                 db_context.tokenized_utterance,
                                                 self._utterance_token_indexers,
