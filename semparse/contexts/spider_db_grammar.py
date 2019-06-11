@@ -58,8 +58,8 @@ GRAMMAR_DICTIONARY["table_name"] = ["table_alias"]
 GRAMMAR_DICTIONARY["table_alias"] = ['"t1"', '"t2"', '"t3"', '"t4"']
 GRAMMAR_DICTIONARY["column_name"] = []
 
-GRAMMAR_DICTIONARY["ws"] = ['~"\s*"i']
-GRAMMAR_DICTIONARY['wsp'] = ['~"\s+"i']
+GRAMMAR_DICTIONARY["ws"]  = ['~"\s*"i']  # This is a re whose equation is (\s*). It means 0 or a lot space.
+GRAMMAR_DICTIONARY['wsp'] = ['~"\s+"i']  # This is a re whose equation is (\s+). It means 1 or a lot space.
 
 GRAMMAR_DICTIONARY["expr"] = ['in_expr',
                               # Like expressions.

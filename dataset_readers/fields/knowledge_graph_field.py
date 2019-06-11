@@ -25,24 +25,37 @@ class SpiderKnowledgeGraphField(KnowledgeGraphField):
                  include_in_vocab: bool = True,
                  max_table_tokens: int = None) -> None:
 
+
         # define 8 feature extract function for extracting features when generating the linking_features.
         # The code of these 8 function is in KnowledgeGraphField, such as : "_number_token_match" and "_exact_token_match"
         # These function calculate the relationship between knowledge_graph and utterance_tokens.
-        feature_extractors = feature_extractors if feature_extractors is not None else [
-                'number_token_match',
-                'exact_token_match',
-                'contains_exact_token_match',
-                'lemma_match',
-                'contains_lemma_match',
-                'edit_distance',
-                'span_overlap_fraction',
-                'span_lemma_overlap_fraction',
-                ]
+        # ------
+        # linking_features is created by feature_extractors. feature_extractors are a function list.
         # linking_features[0] is first node
         # linking_features[0][0] is first node + first utterance token
         # linking_features[0][0][0] is first feature_extractors(first node, first utterance token)
         # The dim of linking_features is: number_node_in_graph * number_utterance_token * number_feature_extractors
         # So, every method in feature_extractors return one value. Their input are the same as:(one_node, one_utterance_token)
+        # It will call: feature_extractor(entity, entity_text, token, token_index, self.utterance_tokens)
+        # entity is name of node. entity_text is value of node(or text of node). token is token of utterance. token_index is the token index from utterance. self.utterance_tokens is all token of utterance. 
+        feature_extractors = feature_extractors if feature_extractors is not None else [
+                'number_token_match',           # If input node text is a number and match to the input token of question, then return 1.
+                'exact_token_match',            # If input node text match to the input token of question, then return 1.
+                'contains_exact_token_match',   # If input node text contain the input token of question, then return 1.
+                'lemma_match',                  # If lemma of input node text match to the lemma of input token of question, then return 1.
+                'contains_lemma_match',         # If lemma of input node text contain the lemma of input token of question, then return 1.
+                'edit_distance',
+                'span_overlap_fraction',        # I give you some example: span_overlap_fraction(?, 'born state', ?, 4, ['list', 'the', 'name', ',', 'born', 'state', 'and']); It will return 1.
+                                                # span_overlap_fraction(?, 'born', ?, 4, ['list', 'the', 'name', ',', 'born', 'state', 'and']); It will return 1.
+                                                # span_overlap_fraction(?, 'state', ?, 4, ['list', 'the', 'name', ',', 'born', 'state', 'and']); It will return 0.
+                                                # span_overlap_fraction(?, 'state born', ?, 4, ['list', 'the', 'name', ',', 'born', 'state', 'and']); It will return 1.
+                                                # span_overlap_fraction(?, 'born states', ?, 4, ['list', 'the', 'name', ',', 'born', 'state', 'and']); It will return 1/2=0.5.
+                                                # span_overlap_fraction(?, 'born state aaa', ?, 4, ['list', 'the', 'name', ',', 'born', 'state', 'and']); It will return 2/3=0.66.
+                                                # span_overlap_fraction(?, 'born state', ?, 5, ['list', 'the', 'name', ',', 'born', 'state', 'and']); It will return 1.
+                                                # If the self.utterance_tokens[token_index] do not appear in entity_text, return 0.
+                                                # Else: It will check how many unique words appearing before, after and in token_index of self.utterance_tokens. And then return: this_number / len(entity_text)
+                'span_lemma_overlap_fraction',  # span_overlap_fraction(?, 'born states', ?, 4, ['list', 'the', 'name', ',', 'born', 'state', 'and']) return 1/2=0.5. But span_lemma_overlap_fraction return 1.
+                ]
 
         super().__init__(knowledge_graph, utterance_tokens, token_indexers,
                          tokenizer=tokenizer, feature_extractors=feature_extractors, entity_tokens=entity_tokens,

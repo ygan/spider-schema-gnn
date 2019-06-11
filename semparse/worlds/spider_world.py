@@ -28,23 +28,29 @@ class SpiderWorld:
         self.entities_names = {}
         for i, entity in enumerate(self.db_context.knowledge_graph.entities):
             parts = entity.split(':')
-            if parts[0] in ['table', 'string']:
+            if parts[0] in ['table', 'string']:         # Only two elements for these two circumstance
                 self.entities_names[parts[1]] = i
             else:
-                _, _, table_name, column_name = parts
+                _, _, table_name, column_name = parts   # column:type:table:column_name
                 self.entities_names[f'{table_name}@{column_name}'] = i
         self.valid_actions = []
         self.valid_actions_flat = []
 
+
+
+
     def get_action_sequence_and_all_actions(self,
                                             allow_aliases: bool = False) -> Tuple[List[str], List[str]]:
         grammar_with_context = deepcopy(self.base_grammar_dictionary)
+
         if not allow_aliases:
-            update_grammar_to_be_table_names_free(grammar_with_context)
+            update_grammar_to_be_table_names_free(grammar_with_context) # Update the input grammar_with_context
 
         schema = self.db_context.schema
 
-        update_grammar_with_tables(grammar_with_context, schema)
+        update_grammar_with_tables(grammar_with_context, schema)        # Update the input grammar_with_context
+        
+        yyy = format_grammar_string(grammar_with_context)
         grammar = Grammar(format_grammar_string(grammar_with_context))
 
         valid_actions = initialize_valid_actions(grammar)
