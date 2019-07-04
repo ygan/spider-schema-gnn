@@ -33,7 +33,7 @@ from state_machines.transition_functions.attend_past_schema_items_transition imp
 from state_machines.transition_functions.linking_transition_function import LinkingTransitionFunction
 
 
-@Model.register("spider2")
+@Model.register("spider")
 class SpiderParser(Model):
     def __init__(self,
                  vocab: Vocabulary,

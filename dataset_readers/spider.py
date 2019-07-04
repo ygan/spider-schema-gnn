@@ -29,7 +29,7 @@ class SpiderDatasetReader(DatasetReader):
                  keep_if_unparsable: bool = True,
                  tables_file: str = None,
                  dataset_path: str = 'dataset/database',
-                 load_cache: bool = False,
+                 load_cache: bool = True,
                  save_cache: bool = False,
                  loading_limit = -1):
         
@@ -99,7 +99,8 @@ class SpiderDatasetReader(DatasetReader):
                         pass
 
                 query_tokens = None
-                if 'query_toks' in ex:
+                if 'query_toks' in ex: # query_toks is one element in the Spider dataset. Normally it should be true in here.
+                    
                     # we only have 'query_toks' in example for training/dev sets
 
                     # fix for examples: we want to use the 'query_toks_no_value' field of the example which anonymizes
@@ -139,7 +140,7 @@ class SpiderDatasetReader(DatasetReader):
                          sql: List[str] = None):
         fields: Dict[str, Field] = {}
 
-        # db_context is db graph and its tokens
+        # db_context is db graph and its tokens. It include: utterance, db graph
         db_context = SpiderDBContext(db_id, utterance, tokenizer=self._tokenizer,
                                      tables_file=self._tables_file, dataset_path=self._dataset_path)
 
@@ -161,6 +162,7 @@ class SpiderDatasetReader(DatasetReader):
         # all_actions is the total grammar string list.
         # So you can consider action_sequence is subset of all_actions.
         # And this subset include all grammar you need for this query.
+        # The grammar is defined in semparse/contexts/spider_db_grammar.py which is similar to the BNF grammar type.
         action_sequence, all_actions = world.get_action_sequence_and_all_actions()
 
         if action_sequence is None and self._keep_if_unparsable:

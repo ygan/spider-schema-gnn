@@ -4,7 +4,7 @@
         "dataset_path": "/home/yj/python/Github/bilayerSQL/data/spider/database",
         "keep_if_unparsable": false,
         "lazy": false,
-        "loading_limit": -1,
+        "loading_limit": 199,
         "tables_file": "/home/yj/python/Github/bilayerSQL/data/spider/tables.json"
     },
     "iterator": {
@@ -12,7 +12,7 @@
         "batch_size": 15
     },
     "model": {
-        "type": "spider2",
+        "type": "spider",
         "action_embedding_dim": 200,
         "dataset_path": "/home/yj/python/Github/bilayerSQL/data/spider/",
         "decoder_beam_search": {
@@ -71,7 +71,7 @@
         "dataset_path": "/home/yj/python/Github/bilayerSQL/data/spider/database",
         "keep_if_unparsable": true,
         "lazy": false,
-        "loading_limit": -1,
+        "loading_limit": 199,
         "tables_file": "/home/yj/python/Github/bilayerSQL/data/spider/tables.json"
     },
     "validation_iterator": {

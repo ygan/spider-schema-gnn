@@ -11,7 +11,7 @@ local dataset_path = "/home/yj/python/Github/bilayerSQL/data/spider/";
     "dataset_path": dataset_path + "database",
     "lazy": false,
     "keep_if_unparsable": false,
-    "loading_limit": -1
+    "loading_limit": 200-1
   },
 
   "validation_dataset_reader": {
@@ -20,7 +20,7 @@ local dataset_path = "/home/yj/python/Github/bilayerSQL/data/spider/";
     "dataset_path": dataset_path + "database",
     "lazy": false,
     "keep_if_unparsable": true,
-    "loading_limit": -1
+    "loading_limit": 200-1
   },
 
   "train_data_path": dataset_path + "train_spider.json",
@@ -32,7 +32,7 @@ local dataset_path = "/home/yj/python/Github/bilayerSQL/data/spider/";
 
 
   "model": {
-    "type": "spider2",
+    "type": "spider",
     "dataset_path": dataset_path,
     "parse_sql_on_decoding": true,
     "gnn": true,
