@@ -22,10 +22,11 @@ class SpiderKnowledgeGraphField(KnowledgeGraphField):
                  feature_extractors: List[str] = None,
                  entity_tokens: List[List[Token]] = None,
                  linking_features: List[List[List[float]]] = None,
-                 include_in_vocab: bool = True,
+                 include_in_vocab: bool = True,     # Although default is True, it will send a False to here from calling
                  max_table_tokens: int = None) -> None:
 
-
+        # The shape of linking_features will be:
+        # [ <len of KnowledgeGraph.entities (graph node number)> * <len of utterance_tokens> * <len of feature_extractors> ]
         # define 8 feature extract function for extracting features when generating the linking_features.
         # The code of these 8 function is in KnowledgeGraphField, such as : "_number_token_match" and "_exact_token_match"
         # These function calculate the relationship between knowledge_graph and utterance_tokens.
@@ -65,13 +66,13 @@ class SpiderKnowledgeGraphField(KnowledgeGraphField):
         # we will get a linking_features before we run this method.
         # Original self.linking_features is generated from super().__init__
         # But I think _compute_related_linking_features is useless so I add this:
-        I_Think_It_Useless = self.linking_features # Check useless ???
+        Gan_Think_It_Useless = self.linking_features # Check useless ???
         self.linking_features = self._compute_related_linking_features(self.linking_features)
-        assert I_Think_It_Useless == self.linking_features # Check useless ???
+        assert Gan_Think_It_Useless == self.linking_features # Check useless ???
          
 
         # hack needed to fix calculation of feature extractors in the inherited as_tensor method
-        self._feature_extractors = feature_extractors * 2 #??????
+        self._feature_extractors = feature_extractors * 2 # I think here is also useless ??????
 
 
     # Here is not the overrides of "_compute_linking_features" that is the original function for calculating the linking_features. 

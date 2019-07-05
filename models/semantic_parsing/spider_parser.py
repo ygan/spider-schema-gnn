@@ -37,30 +37,30 @@ from state_machines.transition_functions.linking_transition_function import Link
 class SpiderParser(Model):
     def __init__(self,
                  vocab: Vocabulary,
-                 encoder: Seq2SeqEncoder,
-                 entity_encoder: Seq2VecEncoder,
-                 decoder_beam_search: BeamSearch,
-                 question_embedder: TextFieldEmbedder,
-                 input_attention: Attention,
-                 past_attention: Attention,
-                 max_decoding_steps: int,
-                 action_embedding_dim: int,
-                 gnn: bool = True,
-                 decoder_use_graph_entities: bool = True,
-                 decoder_self_attend: bool = True,
-                 gnn_timesteps: int = 2,
-                 parse_sql_on_decoding: bool = True,
-                 add_action_bias: bool = True,
-                 use_neighbor_similarity_for_linking: bool = True,
-                 dataset_path: str = 'dataset',
-                 training_beam_size: int = None,
-                 decoder_num_layers: int = 1,
-                 dropout: float = 0.0,
-                 rule_namespace: str = 'rule_labels',
-                 scoring_dev_params: dict = None,
-                 debug_parsing: bool = False) -> None:
+                 encoder: Seq2SeqEncoder,                   # one layer LSTM. 400 -> 200
+                 entity_encoder: Seq2VecEncoder,            # boe  ???
+                 decoder_beam_search: BeamSearch,           # 10
+                 question_embedder: TextFieldEmbedder,      # None pretrain embedder but trainable here
+                 input_attention: Attention,                # {"type": "dot_product"},
+                 past_attention: Attention,                 # {"type": "dot_product"},
+                 max_decoding_steps: int,                   # 100
+                 action_embedding_dim: int,                 # 200
+                 gnn: bool = True,                          # True
+                 decoder_use_graph_entities: bool = True,   # True
+                 decoder_self_attend: bool = True,          # True
+                 gnn_timesteps: int = 2,                    # 2
+                 parse_sql_on_decoding: bool = True,        # True
+                 add_action_bias: bool = True,              # True. Not define in jsonnet file.
+                 use_neighbor_similarity_for_linking: bool = True, # True
+                 dataset_path: str = 'dataset',             # dataset_path in jsonnet
+                 training_beam_size: int = None,            # 1
+                 decoder_num_layers: int = 1,               # 1. Not define in jsonnet file.
+                 dropout: float = 0.0,                      # 0.5
+                 rule_namespace: str = 'rule_labels',       # 'rule_labels'. Not define in jsonnet file.
+                 scoring_dev_params: dict = None,           # None. Not define in jsonnet file.
+                 debug_parsing: bool = False) -> None:      # False. Not define in jsonnet file.
         super().__init__(vocab)
-        self.vocab = vocab
+        self.vocab = vocab          # I think it is automatically builded from Field of instance whose 'include_in_vocab' is True
         self._encoder = encoder
         self._max_decoding_steps = max_decoding_steps
         if dropout > 0:
@@ -161,8 +161,55 @@ class SpiderParser(Model):
                 world: List[SpiderWorld],
                 schema: Dict[str, torch.LongTensor],
                 action_sequence: torch.LongTensor = None) -> Dict[str, torch.Tensor]:
+        """
+        The five input parameter look like that it must the same as the "return Instance(fields)" in dataset_readers/spider.py
+        
+        utterance:
+            It had been tokenized before return Instance(fields). But it will automatically be converted to single numbers by AllenNLP.
+            (PS: tokenized is converting a sentence to a group word. Vocabulary is converting these word to numbers.)
+            AllenNLP will build the vocabulary automatically from all words that is why 
+            we can not get the numbers when debug in SpiderDatasetReader since we can build a vocabulary until we get all words.
+        
+        schema:
+            This Dict is generated from SpiderKnowledgeGraphField obj which inherit from KnowledgeGraphField.
+            This Dict will contain two elements: 'linking' and 'text'.
 
+            1. 'text':
+            The 'text' is 'entity_texts' in the graph which can consider as node name or node text. It is table name or column name in here.
+            Because we do not include the words in 'text' to the vocabulary (The attribute of 'include_in_vocab' in SpiderKnowledgeGraphField is set False)
+            So if we can not find the exact same words from the question dataset, we can only use @@UN_KNOWN@@ token for that.
+            For example, suppose there are only two question(utterance) in the Spider dataset:
+                Q1: how many heads of the departments are older than 56?
+                Q2: show me all the student's ids.
+                'text' in schema for Q1:[department, original department id, department head, staff, staff id, staff age]
+                'text' in schema for Q2:[student, student id, student name]
+                All the number for 'text' in schema for Q1 and Q2 will be @@UN_KNOWN@@.
+                Since the @@UN_KNOWN@@ is 1, and @@PAD@@ is 0, we can get final token number for 'text' in schema is:
+                'text' in schema for Q1:[[1,0,0],[1,1,1],[1,1,0],[1,0,0],[1,1,0],[1,1,0]]
+                'text' in schema for Q2:[[1,0],[1,1],[1,1]]
+                ----------------------
+                But if the Q2 is: show me all the student's id.
+                Now the vocabulary will contain the id and 'text' in schema for Q1 and Q2 also contain the token of 'id'.
+                Let's suppose the number for 'id' in vocabulary is 5.Now:
+                'text' in schema for Q1:[[1,0,0],[1,1,5],[1,1,0],[1,0,0],[1,5,0],[1,1,0]]
+                'text' in schema for Q2:[[1,0],[1,5],[1,1]]
+
+            2. 'linking'
+            The linking come from linking_features. However, there dimension is different. 
+            I think that is why: "self._feature_extractors = feature_extractors * 2" happen in SpiderKnowledgeGraphField.
+            The shape of linking_features will be:
+            [ <len of KnowledgeGraph.entities (graph node number)> * <len of utterance_tokens> * <len of feature_extractors> ]
+            But the shape of 'linking' will be:
+            [ <len of KnowledgeGraph.entities (graph node number)> * <len of utterance_tokens> * <len of feature_extractors * 2> ]
+            Data that appears in front and has the same dimensions as linking_features is the same as linking_features.
+            I don't know why it will add extra data to become <len of feature_extractors * 2>. 
+            I also don't know what extra data means.
+            But I think we can only use the data at the head whose shape is equal to linking_features, 
+            which means we directly use the linking_features only.
+        """
         batch_size = len(world)
+        # from g_util import tensorToCsv
+        # tensorToCsv(schema['linking'][0], path='/home/yj/Documents/gan.txt')
         device = utterance['tokens'].device
 
         initial_state = self._get_initial_state(utterance, world, schema, valid_actions)

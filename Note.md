@@ -1,4 +1,9 @@
 # Study Note For Repository
+Tutorial:
+
+https://allennlp.org/tutorials
+https://mlexplained.com/2019/01/30/an-in-depth-tutorial-to-allennlp-from-basics-to-elmo-and-bert/
+
 
 ## Structure:
 
