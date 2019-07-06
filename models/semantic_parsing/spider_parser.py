@@ -38,7 +38,7 @@ class SpiderParser(Model):
     def __init__(self,
                  vocab: Vocabulary,
                  encoder: Seq2SeqEncoder,                   # one layer LSTM. 400 -> 200
-                 entity_encoder: Seq2VecEncoder,            # boe  ???
+                 entity_encoder: Seq2VecEncoder,            # boe is BagOfEmbeddingsEncoder. "embedding_dim": 200, "averaged": true. So here calc the average.
                  decoder_beam_search: BeamSearch,           # 10
                  question_embedder: TextFieldEmbedder,      # None pretrain embedder but trainable here
                  input_attention: Attention,                # {"type": "dot_product"},
@@ -72,6 +72,14 @@ class SpiderParser(Model):
         self._add_action_bias = add_action_bias
         self._scoring_dev_params = scoring_dev_params or {}
         self.parse_sql_on_decoding = parse_sql_on_decoding
+        
+        # TimeDistributed can automatically make entity_encoder support 4D tensor.
+        # TimeDistributed will automatically reshapes the input of entity_encoder to a 3D tensor,
+        # which is from 4D (batch,??,time_step,dimension) -> 3D (batch*??, time_step,dimension).
+        # After calculation by entity_encoder, TimeDistributed reshapes it back to 4D.
+        # _entity_encoder will calc the average of the embeding value of every token in one node.
+        # For example: to "department id", the process of _entity_encoder is:
+        # _e_e = [embeding(department)+embeding(id)]/2. The dimension of the _e_e is the same as the embeding(department).
         self._entity_encoder = TimeDistributed(entity_encoder)
         self._use_neighbor_similarity_for_linking = use_neighbor_similarity_for_linking
         self._self_attend = decoder_self_attend
@@ -107,7 +115,7 @@ class SpiderParser(Model):
         torch.nn.init.normal_(self._first_attended_utterance)
         torch.nn.init.normal_(self._first_attended_output)
 
-        self._num_entity_types = 9
+        self._num_entity_types = 9 # ['boolean', 'foreign', 'number', 'others', 'primary', 'text', 'time'] + 'string' + 'table'
         self._embedding_dim = question_embedder.get_output_dim()
 
         self._entity_type_encoder_embedding = Embedding(self._num_entity_types, self._embedding_dim)
@@ -208,8 +216,7 @@ class SpiderParser(Model):
             which means we directly use the linking_features only.
         """
         batch_size = len(world)
-        # from g_util import tensorToCsv
-        # tensorToCsv(schema['linking'][0], path='/home/yj/Documents/gan.txt')
+        
         device = utterance['tokens'].device
 
         initial_state = self._get_initial_state(utterance, world, schema, valid_actions)
@@ -273,8 +280,8 @@ class SpiderParser(Model):
         utterance_mask = util.get_text_field_mask(utterance).float()
 
         batch_size, num_entities, num_entity_tokens, _ = embedded_schema.size()
-        num_entities = max([len(world.db_context.knowledge_graph.entities) for world in worlds])
-        num_question_tokens = utterance['tokens'].size(1)
+        num_entities = max([len(world.db_context.knowledge_graph.entities) for world in worlds]) # entities are nodes
+        num_question_tokens = utterance['tokens'].size(1) # Because of pad, their size will be equal.
 
         # entity_types: tensor with shape (batch_size, num_entities), where each entry is the
         # entity's type id.
@@ -314,7 +321,14 @@ class SpiderParser(Model):
         linking_probabilities = self._get_linking_probabilities(worlds, linking_scores.transpose(1, 2),
                                                                 utterance_mask, entity_type_dict)
 
-        # (batch_size, num_entities, num_neighbors) or None
+        # the shape of neighbor_indices is: (batch_size, num_entities, num_neighbors) or None
+        # It is index that is generated from worlds[*].db_context.knowledge_graph.neighbors. It is the edge in a graph.
+        # The @indices value@ here can be used to get the node and node value through: 
+        # for b in batch...
+        #   for n in num_entities
+        #       for index in @indices value@[b][n]:
+        #           node = worlds[i].db_context.knowledge_graph.entities[index] # node. such as: 'column:foreign:management:department_id'
+        #           worlds[i].db_context.knowledge_graph.entity_text[node] # node value. such as: 'department id'
         neighbor_indices = self._get_neighbor_indices(worlds, num_entities, linking_scores.device)
 
         if self._use_neighbor_similarity_for_linking and neighbor_indices is not None:
@@ -327,6 +341,7 @@ class SpiderParser(Model):
             # (batch_size, num_entities, num_neighbors, embedding_dim)
             embedded_neighbors = util.batched_index_select(encoded_table, torch.abs(neighbor_indices))
 
+            
             neighbor_mask = util.get_text_field_mask({'ignored': neighbor_indices + 1},
                                                      num_wrapping_dims=1).float()
 
@@ -419,6 +434,8 @@ class SpiderParser(Model):
 
         return initial_state
 
+
+
     @staticmethod
     def _get_neighbor_indices(worlds: List[SpiderWorld],
                               num_entities: int,
@@ -471,6 +488,8 @@ class SpiderParser(Model):
         if no_entities_have_neighbors:
             return None
         return torch.tensor(batch_neighbors, device=device, dtype=torch.long)
+
+
 
     def _get_schema_graph_encoding(self,
                                    worlds: List[SpiderWorld],
@@ -678,7 +697,7 @@ class SpiderParser(Model):
                 # This index of 0 is for the null entity for each type, representing the case where a
                 # word doesn't link to any entity.
                 entity_indices = [0]
-                entities = world.db_context.knowledge_graph.entities
+                entities = world.db_context.knowledge_graph.entities # there is no pad data in entities, so don't worry.
                 for entity_index, _ in enumerate(entities):
                     if entity_type_dict[batch_index * num_entities + entity_index] == type_index:
                         entity_indices.append(entity_index)
@@ -696,6 +715,7 @@ class SpiderParser(Model):
                 # so we get back something of shape (num_question_tokens,) for each index we're
                 # selecting.  All of the selected indices together then make a tensor of shape
                 # (num_question_tokens, num_entities_per_type + 1).
+                # But Gan can not find that normalization is done per type.???
                 indices = linking_scores.new_tensor(entity_indices, dtype=torch.long)
                 entity_scores = linking_scores[batch_index].index_select(1, indices)
 
@@ -764,9 +784,22 @@ class SpiderParser(Model):
 
         Returns
         -------
-        A ``torch.LongTensor`` with shape ``(batch_size, num_entities, num_types)``.
+        A ``torch.LongTensor`` with shape ``(batch_size, num_entities)``.
+            It give every entities (nodes) a type and pad them alignment. So you can put it to embeding or NN.
+            This tensor is also the entity_types but use different data organization. 
+            In here, the location of entity type is the same as the SpiderWorld.db_context.knowledge_graph.entities.
+
         entity_types : ``Dict[int, int]``
             This is a mapping from ((batch_index * num_entities) + entity_index) to entity type id.
+            This is almost the same as last return obj which is a tensor, but here is a dict.
+
+
+        So their common:
+            A ``torch.LongTensor``[3][1] is the type of SpiderWorld[3].db_context.knowledge_graph.entities[1].
+            A ``torch.LongTensor``[3][1] equal to entity_types[3*num_entities+1]
+        their different:
+            Because of pad, total element of A ``torch.LongTensor`` may be more than entity_types. But the function <(batch_index * num_entities) + entity_index> is always correct.
+            A ``torch.LongTensor is a tensor. entity_types is a dict.
         """
         entity_types = {}
         batch_types = []
@@ -779,9 +812,9 @@ class SpiderParser(Model):
             for entity_index, entity in enumerate(world.db_context.knowledge_graph.entities):
                 parts = entity.split(':')
                 entity_main_type = parts[0]
+
                 if entity_main_type == 'column':
-                    column_type = parts[1]
-                    entity_type = column_type_ids.index(column_type)
+                    entity_type = column_type_ids.index(parts[1])
                 elif entity_main_type == 'string':
                     # cell value
                     entity_type = len(column_type_ids)
@@ -796,10 +829,12 @@ class SpiderParser(Model):
                 # linking scores are stored.
                 flattened_entity_index = batch_index * num_entities + entity_index
                 entity_types[flattened_entity_index] = entity_type
-            padded = pad_sequence_to_length(types, num_entities, lambda: 0)
+            padded = pad_sequence_to_length(types, num_entities, lambda: 0) # pad 0 for alignment. But 0 relate to the type of boolean. I think it is fine?! May be it will delete it later through mask.
             batch_types.append(padded)
 
         return torch.tensor(batch_types, dtype=torch.long, device=device), entity_types
+
+
 
     def _compute_validation_outputs(self,
                                     actions: List[List[ProductionRuleArray]],

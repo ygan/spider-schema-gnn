@@ -45,7 +45,7 @@ def tensor2DToCsv(tensor,path=None,token=',',write_name=True):
 # a = torch.tensor([[[1,2,3],[4,5,6]],[[2,2,2],[5,5,5]]])
 # tensorToCsv(tensor,path='/home/yj/Documents/gan.txt')
 def tensorToCsv(tensor,path=None,token=','):
-    tensor = tensor.cpu()
+    tensor = tensor.cpu().detach()
     z = tensor.numpy().tolist()
     if len(np.shape(z)) == 3:
         for i in range(np.shape(z)[0]):
