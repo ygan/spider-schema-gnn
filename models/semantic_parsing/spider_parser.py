@@ -357,15 +357,27 @@ class SpiderParser(Model):
             # (batch_size, num_entities, embedding_dim)
             entity_embeddings = torch.tanh(entity_type_embeddings)
 
+        # The shape of entity_embeddings is (batch, node_num, dim)
+        # The shape of linking_probabilities is (batch, utterance_len, node_num)
+        # The shape of link_embedding is (batch, utterance_len, dim)
+        # So actually, link_embedding = torch.bmm(linking_probabilities, entity_embeddings)
+        # Actually, matrix multiply and attention is weighted_sum.
+        # The link_embedding is embeding for every token in utterance with its node information.
         link_embedding = util.weighted_sum(entity_embeddings, linking_probabilities)
+
+        # So we can catenate the link_embedding with embedded_utterance.
         encoder_input = torch.cat([link_embedding, embedded_utterance], 2)
 
         # (batch_size, utterance_length, encoder_output_dim)
         encoder_outputs = self._dropout(self._encoder(encoder_input, utterance_mask))
-
+        
+        # linking_probabilities.max(dim=1)[1] is the index of the max value. So we only keep [0].
+        # The shape of linking_probabilities is (batch, utterance_len, node_num)
+        # So max_entities_relevance is the max relevant value for every node.
         max_entities_relevance = linking_probabilities.max(dim=1)[0]
         entities_relevance = max_entities_relevance.unsqueeze(-1).detach()
 
+        # dot multiply. narrow the non-relevant node embeding value. Good!
         graph_initial_embedding = entity_type_embeddings * entities_relevance
 
         encoder_output_dim = self._encoder.get_output_dim()

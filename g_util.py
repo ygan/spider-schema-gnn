@@ -58,3 +58,6 @@ def tensorToCsv(tensor,path=None,token=','):
 # import torch
 # a = torch.tensor([[[1,2,3],[4,5,6]],[[2,2,2],[5,5,5]]])
 # tensorToCsv(a,path='/home/yj/Documents/gan22.txt')
+
+# from g_util import tensorToCsv
+# tensorToCsv(tensor,path='/home/yj/Documents/gan.txt')
