@@ -513,13 +513,21 @@ class SpiderParser(Model):
 
         for batch_index, world in enumerate(worlds):
             x = initial_graph_embeddings[batch_index]
-
+            
+            # edge list
             adj_list = self._get_graph_adj_lists(initial_graph_embeddings.device,
                                                  world, initial_graph_embeddings.size(1) - 1)
             graph_data = Data(x)
             for i, l in enumerate(adj_list):
                 graph_data[f'edge_index_{i}'] = l
+            # After the for loop, we can:
+            # graph_data.x is node
+            # graph_data.edge_index_0 is adj_list[0]
+            # graph_data.edge_index_1 is adj_list[1]
+            # graph_data.edge_index_2 is adj_list[2]
+
             graph_data_list.append(graph_data)
+
 
         batch = Batch.from_data_list(graph_data_list)
 
@@ -535,11 +543,26 @@ class SpiderParser(Model):
 
     @staticmethod
     def _get_graph_adj_lists(device, world, global_entity_id, global_node=False):
+        """
+        get the edge of node.
+        return a list contain 3 obj:
+           ( 
+            [
+                edge: "column to table" and "table to column". For example, if there is [1,5], it must also contain [5,1]. 
+            ],
+            [
+                foreign->primary
+            ],
+            [
+                foreign<-primary. For example, if there is [2,5] in last "foreign->primary", there must be a [5,2] in here.
+            ]
+           )
+        """
         entity_mapping = {}
         for i, entity in enumerate(world.db_context.knowledge_graph.entities):
             entity_mapping[entity] = i
         entity_mapping['_global_'] = global_entity_id
-        adj_list_own = []  # column--table
+        adj_list_own = []  # column--table (bi-direction)
         adj_list_link = []  # table->table / foreign->primary
         adj_list_linked = []  # table<-table / foreign<-primary
         adj_list_global = []  # node->global
