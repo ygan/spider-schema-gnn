@@ -313,8 +313,13 @@ class SpiderParser(Model):
 
         linking_scores = question_entity_similarity_max_score
 
+        # linking_features -> nn(16->1) -> feature_scores
+        # Conbine the 16 linking features to 1
         feature_scores = self._linking_params(linking_features).squeeze(3)
 
+        # linking_scores is created by embeding_of_utterance and embeding_of_node, which is trainable.
+        # feature_scores is created by certain function, which is not trainable.
+        # But they are the same. They means the similarity between utterance and node.
         linking_scores = linking_scores + feature_scores
 
         # (batch_size, num_question_tokens, num_entities)
@@ -382,28 +387,50 @@ class SpiderParser(Model):
 
         encoder_output_dim = self._encoder.get_output_dim()
         if self._gnn:
-            entities_graph_encoding = self._get_schema_graph_encoding(worlds,
-                                                                      graph_initial_embedding)
+
+            # the shape of entities_graph_encoding is the same as graph_initial_embedding (batch, max_node_num, embed_dim)
+            # Encode the graph_initial_embedding through the graph CNN
+            entities_graph_encoding = self._get_schema_graph_encoding(worlds, graph_initial_embedding)
+
+            # The same as previous
+            # The shape of graph_link_embedding is (batch, max_utterance_num, embed_dim)
+            # Now every word of token contain its node and the related node.
             graph_link_embedding = util.weighted_sum(entities_graph_encoding, linking_probabilities)
             encoder_outputs = torch.cat((
                 encoder_outputs,
                 graph_link_embedding
             ), dim=-1)
+
             encoder_output_dim = self._action_embedding_dim + self._encoder.get_output_dim()
         else:
             entities_graph_encoding = None
 
         if self._self_attend:
             # linked_actions_linking_scores = self._get_linked_actions_linking_scores(actions, entities_graph_encoding)
-            entities_ff = self._ent2ent_ff(entities_graph_encoding)
+
+            # _ent2ent_ff is just a activated function of relu
+            # entities_graph_encoding -> relu -> entities_ff
+            entities_ff = self._ent2ent_ff(entities_graph_encoding) # relue
+
+            # Similarity between the every node.
+            # The shape of linked_actions_linking_scores is (batch, max_node_num, max_node_num)
+            # The first line:  [Similarity of Node1 and Node1, Similarity of Node1 and Node2, ... ]
+            # The Second line: [Similarity of Node2 and Node1, Similarity of Node2 and Node2, ... ]
+            # The true linked_actions_linking_scores is not related to the action. It is the self-connection of node.
+            # The name is error.
             linked_actions_linking_scores = torch.bmm(entities_ff, entities_ff.transpose(1, 2))
         else:
             linked_actions_linking_scores = [None] * batch_size
 
         # This will be our initial hidden state and memory cell for the decoder LSTM.
+        # encoder_outputs contain three information: utterance, utterance related node, utterance related node graph
+        # There is no RNN in get_final_encoder_states. We only take the hidden state from encoder_outputs.
+        # The shape of final_encoder_output is (batch, dim_of_encoder_outputs)
         final_encoder_output = util.get_final_encoder_states(encoder_outputs,
                                                              utterance_mask,
                                                              self._encoder.is_bidirectional())
+
+
         memory_cell = encoder_outputs.new_zeros(batch_size, encoder_output_dim)
         initial_score = embedded_utterance.data.new_zeros(batch_size)
 
@@ -417,16 +444,17 @@ class SpiderParser(Model):
         utterance_mask_list = [utterance_mask[i] for i in range(batch_size)]
         initial_rnn_state = []
         for i in range(batch_size):
-            initial_rnn_state.append(RnnStatelet(final_encoder_output[i],
-                                                 memory_cell[i],
-                                                 self._first_action_embedding,
-                                                 self._first_attended_utterance,
-                                                 encoder_output_list,
-                                                 utterance_mask_list))
+            initial_rnn_state.append(  RnnStatelet(final_encoder_output[i],
+                                                 memory_cell[i], # Here is 0
+                                                 self._first_action_embedding,   # previous_action_embedding
+                                                 self._first_attended_utterance, # attended_input
+                                                 encoder_output_list, # encoder_output
+                                                 utterance_mask_list) # encoder_output_mask
+                                    )
 
         initial_grammar_state = [self._create_grammar_state(worlds[i],
                                                             actions[i],
-                                                            linking_scores[i],
+                                                            linking_scores[i], # the similarity between utterance and node. shape: (node_num, utterance_num)
                                                             linked_actions_linking_scores[i],
                                                             entity_types[i],
                                                             entities_graph_encoding[
@@ -535,9 +563,14 @@ class SpiderParser(Model):
 
         num_nodes = max_num_entities
         gnn_output = gnn_output.view(batch_size, num_nodes, -1)
+
         # entities_encodings = gnn_output
-        entities_encodings = gnn_output[:, :max_num_entities]
-        # global_node_encodings = gnn_output[:, max_num_entities]
+        entities_encodings = gnn_output[:, :max_num_entities] # I think this is useless. # I prefer the last command. So I add:
+
+        assert entities_encodings.shape[0] == gnn_output.shape[0]
+        assert entities_encodings.shape[1] == gnn_output.shape[1]
+        assert entities_encodings.shape[2] == gnn_output.shape[2]
+        assert entities_encodings.shape[2]*entities_encodings.shape[1]*entities_encodings.shape[0] == torch.sum( torch.eq(entities_encodings.cpu().detach(), gnn_output.cpu().detach()) )
 
         return entities_encodings
 
@@ -608,9 +641,23 @@ class SpiderParser(Model):
                               world: SpiderWorld,
                               possible_actions: List[ProductionRule],
                               linking_scores: torch.Tensor,
-                              linked_actions_linking_scores: torch.Tensor,
+                              self_linking_scores: torch.Tensor,
                               entity_types: torch.Tensor,
                               entity_graph_encoding: torch.Tensor) -> GrammarStatelet:
+        """
+
+        possible_actions:
+            The action appear in the current SQL. The detailed of this obj, please see the end of the spider.py.
+        linking_scores:
+            Node linking to utterance.
+            the similarity between utterance and node. shape: (node_num, utterance_num)
+        self_linking_scores:
+            Node self linking.
+            The true self_linking_scores is not related to the action. It is the self-connection of node.
+            The shape of self_linking_scores is (batch, max_node_num, max_node_num)
+            The first line:  [Similarity of Node1 and Node1, Similarity of Node1 and Node2, ... ]
+            The Second line: [Similarity of Node2 and Node1, Similarity of Node2 and Node2, ... ]
+        """
         action_map = {}
         for action_index, action in enumerate(possible_actions):
             action_string = action[0]
@@ -630,35 +677,42 @@ class SpiderParser(Model):
             # productions of that non-terminal.  We'll first split those productions by global vs.
             # linked action.
 
-            action_indices = [action_map[action_string] for action_string in action_strings]
+            action_indices = [action_map[action_string] for action_string in action_strings] #index in possible_actions
             production_rule_arrays = [(possible_actions[index], index) for index in action_indices]
             global_actions = []
             linked_actions = []
             for production_rule_array, action_index in production_rule_arrays:
-                if production_rule_array[1]:
-                    global_actions.append((production_rule_array[2], action_index))
+                if production_rule_array[1]: 
+                    # this rule comes from the global grammar (global rules) see the end of spider.py.
+                    # production_rule_array[2] is _rule_id built by allennlp. 
+                    # _rule_id will be the same in all instance if the rule is the same. Similar to the vocabulary machenism.
+                    global_actions.append((production_rule_array[2], action_index))  # keep rule id
                 else:
-                    linked_actions.append((production_rule_array[0], action_index))
+                    # this rule is an instance-specific production rule. not global rules.
+                    linked_actions.append((production_rule_array[0], action_index))  # keep rule string value
 
             if global_actions:
                 global_action_tensors, global_action_ids = zip(*global_actions)
                 global_action_tensor = torch.cat(global_action_tensors, dim=0).to(
-                    global_action_tensors[0].device).long()
+                    global_action_tensors[0].device).long() # cat the dim=0, and then to GPU, and then to long tensor.
+
                 global_input_embeddings = self._action_embedder(global_action_tensor)
                 global_output_embeddings = self._output_action_embedder(global_action_tensor)
                 translated_valid_actions[key]['global'] = (global_input_embeddings,
                                                            global_output_embeddings,
                                                            list(global_action_ids))
+
             if linked_actions:
                 linked_rules, linked_action_ids = zip(*linked_actions)
                 entities = [rule.split(' -> ')[1].strip('[]\"') for rule in linked_rules]
 
                 entity_ids = [entity_map[entity] for entity in entities]
 
-                entity_linking_scores = linking_scores[entity_ids]
-
-                if linked_actions_linking_scores is not None:
-                    entity_action_linking_scores = linked_actions_linking_scores[entity_ids]
+                # here means the order of the 'linking_scores' is the same as the 'world'
+                # So we can get our linking_scores through this way:
+                entity_link_utterance_scores = linking_scores[entity_ids] # I change the name: # entity_linking_scores = linking_scores[entity_ids]
+                if self_linking_scores is not None:
+                    entity_self_linking_scores  = self_linking_scores[entity_ids] # I change the name: # entity_action_linking_scores = self_linking_scores[entity_ids]
 
                 if not self._decoder_use_graph_entities:
                     entity_type_tensor = entity_types[entity_ids]
@@ -672,18 +726,18 @@ class SpiderParser(Model):
                     )
 
                 if self._self_attend:
-                    translated_valid_actions[key]['linked'] = (entity_linking_scores,
-                                                               entity_type_embeddings,
+                    translated_valid_actions[key]['linked'] = (entity_link_utterance_scores, # I change the name: # entity_linking_scores,
+                                                               entity_type_embeddings,       # It should be 'entity_graph_embeddings' in here.
                                                                list(linked_action_ids),
-                                                               entity_action_linking_scores)
+                                                               entity_self_linking_scores)   # I change the name: # entity_action_linking_scores)
                 else:
-                    translated_valid_actions[key]['linked'] = (entity_linking_scores,
+                    translated_valid_actions[key]['linked'] = (entity_link_utterance_scores, # I change the name: # entity_linking_scores,
                                                                entity_type_embeddings,
                                                                list(linked_action_ids))
 
         return GrammarStatelet(['statement'],
                                translated_valid_actions,
-                               self.is_nonterminal)
+                               self.is_nonterminal) # self.is_nonterminal is a callable function for GrammarStatelet
 
     @staticmethod
     def is_nonterminal(token: str):

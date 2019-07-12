@@ -202,7 +202,21 @@ class SpiderDatasetReader(DatasetReader):
             assert False # gan ???
         action_sequence_field = ListField(index_fields)
 
+
+        # The fields["valid_actions"] include the global rule which is the same in all SQL and database specific rules.
+        # For example, 'binaryop -> ["!="]' and 'query -> [select_core, groupby_clause, limit]' are global rules.
+        # 'column_name -> ["department@budget_in_billions"]' and 'col_ref -> ["department@budget_in_billions"]' are not global rules.
+        # So fields["valid_actions"] is case by case but will contain the same global rules. And it must include the rules appearing in fields["action_sequence"].
+        # Now the attribute of _rule_id is None. But when finish loading all data, allennlp will automatically build the vocabulary and give a unique _ruled_id for every rule.
+        # But when forward the fields["valid_actions"] to the model, it will become the ProductionRule List.
+        # We will find that the global rules will contain a _rule_id but non-global rules will not.
+        # And in ProductionRule List, the global rules will become a tuple and non-global will become a ProductionRule obj.
+        # In a tuple and ProductionRule, its[0] shows its rule value, such as: 'where_clause -> ["where", expr, where_conj]' or 'col_ref -> ["department@budget_in_billions"]'. 
+        # In a tuple and ProductionRule, its[1] shows whether it is global rules, such as True or False.
+        # In a tuple and ProductionRule, its[2] shows _rule_id. But if it is non-global rule, it will be None.
+        # In a tuple and ProductionRule, its[3] shows left rule value. For example: 'where_clause' is the left rule value of 'where_clause -> ["where", expr, where_conj]'. 
         # fields["valid_actions"]   # All action / All grammar
+
         # fields["utterance"]       # TextFile for utterance
         fields["action_sequence"] = action_sequence_field   # grammar rules (action) of this query, and every rule contains a total grammar set which is fields["valid_actions"].
         fields["world"] = MetadataField(world) #Maybe just for calc the metric. # A MetadataField is a Field that does not get converted into tensors. https://allenai.github.io/allennlp-docs/api/allennlp.data.fields.html?highlight=metadatafield#metadata-field
