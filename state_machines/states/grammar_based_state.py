@@ -37,7 +37,7 @@ class GrammarBasedState(State['GrammarBasedState']):
     action_history : ``List[List[int]]``
         Passed to super class; see docs there.
     score : ``List[torch.Tensor]``
-        Passed to super class; see docs there.
+        Passed to super class; see docs there. initial value is 0.
     rnn_state : ``List[RnnStatelet]``
         An ``RnnStatelet`` for every group element.  This keeps track of the current decoder hidden
         state, the previous decoder output, the output from the encoder (for computing attentions),
@@ -48,6 +48,12 @@ class GrammarBasedState(State['GrammarBasedState']):
     possible_actions : ``List[List[ProductionRule]]``
         The list of all possible actions that was passed to ``model.forward()``.  We need this so
         we can recover production strings, which we need to update grammar states.
+    action_entity_mapping:
+        a dict. 
+        Key is the index of action. (include the global and non-global action)
+        Value is the node index.
+        So only the specific node (non-global) have a node. The value for global action is -1, which means no node for these actions.
+
     extras : ``List[Any]``, optional (default=None)
         If you need to keep around some extra data for each instance in the batch, you can put that
         in here, without adding another field.  This should be used `very sparingly`, as there is

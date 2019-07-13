@@ -37,7 +37,7 @@ from state_machines.transition_functions.linking_transition_function import Link
 class SpiderParser(Model):
     def __init__(self,
                  vocab: Vocabulary,
-                 encoder: Seq2SeqEncoder,                   # one layer LSTM. 400 -> 200
+                 encoder: Seq2SeqEncoder,                   # one layer LSTM. 400 -> 200*2. 2 Because bi-direction.
                  entity_encoder: Seq2VecEncoder,            # boe is BagOfEmbeddingsEncoder. "embedding_dim": 200, "averaged": true. So here calc the average.
                  decoder_beam_search: BeamSearch,           # 10
                  question_embedder: TextFieldEmbedder,      # None pretrain embedder but trainable here
@@ -133,14 +133,14 @@ class SpiderParser(Model):
         self._decoder_trainer = MaximumMarginalLikelihood(training_beam_size)
 
         if decoder_self_attend:
-            self._transition_function = AttendPastSchemaItemsTransitionFunction(encoder_output_dim=encoder_output_dim,
-                                                                                action_embedding_dim=action_embedding_dim,
-                                                                                input_attention=input_attention,
-                                                                                past_attention=past_attention,
+            self._transition_function = AttendPastSchemaItemsTransitionFunction(encoder_output_dim=encoder_output_dim, # 400+200gnn=600
+                                                                                action_embedding_dim=action_embedding_dim, # 200
+                                                                                input_attention=input_attention, # {"type": "dot_product"}
+                                                                                past_attention=past_attention, # {"type": "dot_product"},
                                                                                 predict_start_type_separately=False,
-                                                                                add_action_bias=self._add_action_bias,
-                                                                                dropout=dropout,
-                                                                                num_layers=self._decoder_num_layers)
+                                                                                add_action_bias=self._add_action_bias, # True
+                                                                                dropout=dropout, # 0.5
+                                                                                num_layers=self._decoder_num_layers) # 1
         else:
             self._transition_function = LinkingTransitionFunction(encoder_output_dim=encoder_output_dim,
                                                                   action_embedding_dim=action_embedding_dim,
@@ -461,8 +461,10 @@ class SpiderParser(Model):
                                                                 i] if entities_graph_encoding is not None else None)
                                  for i in range(batch_size)]
 
+        # self.parse_sql_on_decoding is True
         initial_sql_state = [SqlState(actions[i], self.parse_sql_on_decoding) for i in range(batch_size)]
 
+        # include all batch.
         initial_state = GrammarBasedState(batch_indices=list(range(batch_size)),
                                           action_history=[[] for _ in range(batch_size)],
                                           score=initial_score_list,
@@ -636,6 +638,7 @@ class SpiderParser(Model):
         return [torch.tensor(l, device=device, dtype=torch.long).transpose(0, 1) if l
                 else torch.tensor(l, device=device, dtype=torch.long)
                 for l in all_adj_types]
+
 
     def _create_grammar_state(self,
                               world: SpiderWorld,

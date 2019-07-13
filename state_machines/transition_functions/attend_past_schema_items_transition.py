@@ -16,16 +16,17 @@ from state_machines.states.rnn_statelet import RnnStatelet
 
 class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
     def __init__(self,
-                 encoder_output_dim: int,
-                 action_embedding_dim: int,
-                 input_attention: Attention,
-                 past_attention: Attention,
-                 activation: Activation = Activation.by_name('relu')(),
-                 predict_start_type_separately: bool = True,
+                 encoder_output_dim: int,                               # 400+200gnn=600
+                 action_embedding_dim: int,                             # 200
+                 input_attention: Attention,                            # {"type": "dot_product"}
+                 past_attention: Attention,                             # {"type": "dot_product"}
+                 activation: Activation = Activation.by_name('relu')(), 
+                 predict_start_type_separately: bool = True,            # False
                  num_start_types: int = None,
-                 add_action_bias: bool = True,
-                 dropout: float = 0.0,
-                 num_layers: int = 1) -> None:
+                 add_action_bias: bool = True,                          # True
+                 dropout: float = 0.0,                                  # 0.5
+                 num_layers: int = 1) -> None:                          # 1
+                 
         super().__init__(encoder_output_dim=encoder_output_dim,
                          action_embedding_dim=action_embedding_dim,
                          input_attention=input_attention,
@@ -44,6 +45,7 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                   state: GrammarBasedState,
                   max_actions: int = None,
                   allowed_actions: List[Set[int]] = None) -> List[GrammarBasedState]:
+
         if self._predict_start_type_separately and not state.action_history[0]:
             # The wikitables parser did something different when predicting the start type, which
             # is our first action.  So in this case we break out into a different function.  We'll

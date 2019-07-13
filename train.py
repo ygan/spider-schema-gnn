@@ -33,4 +33,10 @@ sys.argv = [
     "-o", overrides,
 ]
 
+
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--toy', action='store_true', default=False,
+        help='If set, use small data; used for fast debugging.')
+
 main()

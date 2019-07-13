@@ -8,7 +8,7 @@ class SqlState:
     def __init__(self,
                  possible_actions,
                  enabled: bool=True):
-        self.possible_actions = [a[0] for a in possible_actions]
+        self.possible_actions = [a[0] for a in possible_actions] # Include global action and specific action
         self.action_history = []
         self.tables_used = set()
         self.tables_used_by_columns = set()
