@@ -46,6 +46,18 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                   max_actions: int = None,
                   allowed_actions: List[Set[int]] = None) -> List[GrammarBasedState]:
 
+        """
+        Automatically called by the beam search.
+
+        state:
+            all state include all batch.
+        max_actions:
+            beam_size.
+        allowed_actions:
+            next correct action. learn from correct action ???
+        """
+
+        # _predict_start_type_separately equal to predict_start_type_separately. It is False in training.
         if self._predict_start_type_separately and not state.action_history[0]:
             # The wikitables parser did something different when predicting the start type, which
             # is our first action.  So in this case we break out into a different function.  We'll
@@ -73,13 +85,17 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
 
         return new_states
 
+
+
     def _update_decoder_state(self, state: GrammarBasedState) -> Dict[str, torch.Tensor]:
         # For updating the decoder, we're doing a bunch of tensor operations that can be batched
         # without much difficulty.  So, we take all group elements and batch their tensors together
         # before doing these decoder operations.
 
-        group_size = len(state.batch_indices)
-        attended_question = torch.stack([rnn_state.attended_input for rnn_state in state.rnn_state])
+        group_size = len(state.batch_indices) # batch size.
+        attended_question = torch.stack([rnn_state.attended_input for rnn_state in state.rnn_state]) # state.rnn_state is RnnStatelet
+        
+        # conbine the hidden_state and memory_cell
         if self._num_layers > 1:
             hidden_state = torch.stack([rnn_state.hidden_state for rnn_state in state.rnn_state], 1)
             memory_cell = torch.stack([rnn_state.memory_cell for rnn_state in state.rnn_state], 1)
@@ -87,21 +103,32 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
             hidden_state = torch.stack([rnn_state.hidden_state for rnn_state in state.rnn_state])
             memory_cell = torch.stack([rnn_state.memory_cell for rnn_state in state.rnn_state])
 
+        # Initial value is Random because there is no previous_action.
         previous_action_embedding = torch.stack([rnn_state.previous_action_embedding
                                                  for rnn_state in state.rnn_state])
 
         # (group_size, decoder_input_dim)
+        # self._input_projection_layer = Linear(output_dim + action_embedding_dim, encoder_output_dim) 600 -> 600
+        # This code is wrote in BasicTransitionFunction.py
         projected_input = self._input_projection_layer(torch.cat([attended_question,
                                                                   previous_action_embedding], -1))
         decoder_input = self._activation(projected_input)
+
+        # (attended_question + previous_action_embedding) -> LSTM decoder
         if self._num_layers > 1:
-            _, (hidden_state, memory_cell) = self._decoder_cell(decoder_input.unsqueeze(0),
+            # self._decoder_cell is a self._num_layers layers LSTM with encoder_output_dim -> encoder_output_dim
+            _, (hidden_state, memory_cell) = self._decoder_cell(decoder_input.unsqueeze(0), # 
                                                                 (hidden_state, memory_cell))
         else:
+            # self._decoder_cell is a one layer LSTM with encoder_output_dim -> encoder_output_dim
+            # Initial memory_cell is all 0.
+            # Initial hidden_state is the final hidden state output from encoder.
             hidden_state, memory_cell = self._decoder_cell(decoder_input, (hidden_state, memory_cell))
+
         hidden_state = self._dropout(hidden_state)
 
         # (group_size, encoder_output_dim)
+        # encoder_outputs are total hidden state from encoder.
         encoder_outputs = torch.stack([state.rnn_state[0].encoder_outputs[i] for i in state.batch_indices])
         encoder_output_mask = torch.stack([state.rnn_state[0].encoder_output_mask[i] for i in state.batch_indices])
 
@@ -109,17 +136,24 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
             attended_question, attention_weights = self.attend_on_question(hidden_state[-1],
                                                                            encoder_outputs,
                                                                            encoder_output_mask)
+            # action_query conbine a lot of information not just the action.
             action_query = torch.cat([hidden_state[-1], attended_question], dim=-1)
         else:
+            # attend_on_question is:
+            # re = encoder_outputs.bmm(hidden_state.unsqueeze(-1)).squeeze(-1)
+            # remove redundant re based on the mask
+            # re -> softmax. Normalize the probability. And then we can get the attention_weights.
+            # attended_question = util.weighted_sum(encoder_outputs, attention_weights)
             attended_question, attention_weights = self.attend_on_question(hidden_state,
                                                                            encoder_outputs,
                                                                            encoder_output_mask)
+            # action_query conbine a lot of information not just the action.                                                               
             action_query = torch.cat([hidden_state, attended_question], dim=-1)
 
         # TODO: Can batch this (need to save ids of states with saved outputs)
         past_schema_items_attention_weights = []
         for i, rnn_state in enumerate(state.rnn_state):
-            if rnn_state.decoder_outputs is not None:
+            if rnn_state.decoder_outputs is not None:   # Initial is None because there is not decoding before running this decoder
                 decoder_outputs_states, decoder_outputs_ids = rnn_state.decoder_outputs
                 attn_weights = self.attend(self._past_attention, hidden_state[i].unsqueeze(0),
                                            decoder_outputs_states.unsqueeze(0), None).squeeze(0)
@@ -130,21 +164,25 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
         # past_schema_items_attention_weights = torch.stack(past_schema_items_attention_weights)
 
         # (group_size, action_embedding_dim)
+        # _output_projection_layer is a nn (output_dim + encoder_output_dim, action_embedding_dim) which is (1200,200) when there is gnn
+        # action_query conbine a lot of information not just the action.
         projected_query = self._activation(self._output_projection_layer(action_query))
         predicted_action_embeddings = self._dropout(projected_query)
-        if self._add_action_bias:
+
+        if self._add_action_bias: # ???
             # NOTE: It's important that this happens right before the dot product with the action
             # embeddings.  Otherwise this isn't a proper bias.  We do it here instead of right next
             # to the `.mm` below just so we only do it once for the whole group.
             ones = predicted_action_embeddings.new([[1] for _ in range(group_size)])
             predicted_action_embeddings = torch.cat([predicted_action_embeddings, ones], dim=-1)
+            
         return {
-                'hidden_state': hidden_state,
-                'memory_cell': memory_cell,
-                'attended_question': attended_question,
-                'attention_weights': attention_weights,
-                'past_schema_items_attention_weights': past_schema_items_attention_weights,
-                'predicted_action_embeddings': predicted_action_embeddings,
+                'hidden_state': hidden_state,               # From LSTM decoder
+                'memory_cell': memory_cell,                 # From LSTM decoder
+                'attended_question': attended_question,     # Just original rnn_state.attended_input without any change. But Initial value is Random.
+                'attention_weights': attention_weights,     # Calc from hidden_state now and original encoder_outputs 
+                'past_schema_items_attention_weights': past_schema_items_attention_weights, # None in the first step
+                'predicted_action_embeddings': predicted_action_embeddings,                 #
                 }
 
     @overrides
@@ -376,9 +414,17 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
         This is a simple computation, but we have it as a separate method so that the ``forward``
         method on the main parser module can call it on the initial hidden state, to simplify the
         logic in ``take_step``.
+
+        Be carefull, here do not support the mask.
+
+        Normally, the attention is the dot production attention. 
+        If it is DotProductAttention, the calculation steps are:
+            re = key.bmm(query.unsqueeze(-1)).squeeze(-1)
+            re -> softmax. Normalize the probability. And then we can get the attention_weights.
+            attended_question = util.weighted_sum(value, attention_weights)
         """
         # (group_size, question_length)
-        attention_weights = attention(query, key, None)
+        attention_weights = attention(query, key, None) # The None should be the mask. But there is not mask in here.
 
         if value is None:
             return attention_weights

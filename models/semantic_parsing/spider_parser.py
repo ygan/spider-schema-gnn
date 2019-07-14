@@ -108,6 +108,7 @@ class SpiderParser(Model):
         if gnn:
             encoder_output_dim += action_embedding_dim
 
+        # Initial value of these parameter is Random.
         self._first_action_embedding = torch.nn.Parameter(torch.FloatTensor(action_embedding_dim))
         self._first_attended_utterance = torch.nn.Parameter(torch.FloatTensor(encoder_output_dim))
         self._first_attended_output = torch.nn.Parameter(torch.FloatTensor(action_embedding_dim))
@@ -444,12 +445,13 @@ class SpiderParser(Model):
         utterance_mask_list = [utterance_mask[i] for i in range(batch_size)]
         initial_rnn_state = []
         for i in range(batch_size):
-            initial_rnn_state.append(  RnnStatelet(final_encoder_output[i],
-                                                 memory_cell[i], # Here is 0
-                                                 self._first_action_embedding,   # previous_action_embedding
-                                                 self._first_attended_utterance, # attended_input
-                                                 encoder_output_list, # encoder_output
-                                                 utterance_mask_list) # encoder_output_mask
+            initial_rnn_state.append(  RnnStatelet(     # RnnStatelet is for decoder
+                                                 final_encoder_output[i],       # The final hidden state output from encoder and it will be the initial hidden_state for decoder RNN(LSTM)
+                                                 memory_cell[i],                # Here is 0. Just for LSTM. But this project run based on LSTM.
+                                                 self._first_action_embedding,  # previous_action_embedding. Randon normal_ init.
+                                                 self._first_attended_utterance,# attended_input. Randon normal_ init.
+                                                 encoder_output_list,           # encoder_output
+                                                 utterance_mask_list)           # encoder_output_mask
                                     )
 
         initial_grammar_state = [self._create_grammar_state(worlds[i],

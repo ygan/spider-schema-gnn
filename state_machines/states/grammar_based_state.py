@@ -143,6 +143,14 @@ class GrammarBasedState(State['GrammarBasedState']):
 
     @classmethod
     def combine_states(cls, states: Sequence['GrammarBasedState']) -> 'GrammarBasedState':
+        """
+        This is a weird function which is a classmethod but do not call the self attribute.
+        So you can consider it is a static function but manually define as the class function.
+        So this function is not related to the obj itself.
+
+        This function will combine the input state list to one state obj.
+        This function will be called when beam search the states.
+        """
         batch_indices = [batch_index for state in states for batch_index in state.batch_indices]
         action_histories = [action_history for state in states for action_history in state.action_history]
         scores = [score for state in states for score in state.score]
