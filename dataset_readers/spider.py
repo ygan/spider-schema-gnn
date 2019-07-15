@@ -217,6 +217,30 @@ class SpiderDatasetReader(DatasetReader):
         # In a tuple and ProductionRule, its[3] shows left rule value. For example: 'where_clause' is the left rule value of 'where_clause -> ["where", expr, where_conj]'. 
         # fields["valid_actions"]   # All action / All grammar
 
+        # The information of fields["valid_actions"] is almost the same as the world.valid_actions but using different representations (world is a SpiderWorld obj)
+        # There are two kinds of valid actions in the project but their information is the same.
+        # The first one is a set list: (We call it as list-type-action)
+        # [   #key                #value                      #key         #value   #other key and value pairs
+        #    {rule: 'arg_list -> [expr, ",", arg_list]'  ,  is_global_rule: True,            ... }
+        #    {rule: 'arg_list -> [expr]'  ,                 is_global_rule: True,            ... }
+        #    {...}
+        # ]
+        # You can easily extract the all valid action to a list, such as:
+        # all_actions:
+        # ['arg_list -> [expr, ",", arg_list]' , 'arg_list -> [expr]' , ... ]
+
+        # The second one is also a dict but its key is different and it will combine the same left key value together: (We call it as dict-type-action)
+        # {       #key           #value-list
+        #       arg_list:[
+        #                   '[expr, ",", arg_list]',
+        #                   '[expr]'
+        #                ]
+        #
+        #       ...: [...]
+        #       ... 
+        # }
+        # Say it again, they are valid actions.
+
         # fields["utterance"]       # TextFile for utterance
         fields["action_sequence"] = action_sequence_field   # grammar rules (action) of this query, and every rule contains a total grammar set which is fields["valid_actions"].
         fields["world"] = MetadataField(world) #Maybe just for calc the metric. # A MetadataField is a Field that does not get converted into tensors. https://allenai.github.io/allennlp-docs/api/allennlp.data.fields.html?highlight=metadatafield#metadata-field

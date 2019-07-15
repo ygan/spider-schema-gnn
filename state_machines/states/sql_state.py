@@ -8,6 +8,16 @@ class SqlState:
     def __init__(self,
                  possible_actions,
                  enabled: bool=True):
+        """
+        One SQL correspond to one SqlState obj which include all actions (string).
+        Besides, One SQL correspond to one GrammarStatelet which include all actions (tensor). 
+
+        possible_actions:
+            All action for the current SQL using list-type-action (see spider.py)
+
+        enabled:
+            Normally set True
+        """
         self.possible_actions = [a[0] for a in possible_actions] # Include global action and specific action
         self.action_history = []
         self.tables_used = set()
@@ -71,9 +81,12 @@ class SqlState:
 
         actions_to_remove = {k: set() for k in valid_actions.keys()}
 
+        # original current_clause is None.
         current_clause = self._get_current_open_clause()
 
         if current_clause in ['where_clause', 'orderby_clause', 'join_condition', 'groupby_clause']:
+            # I think this if is useless:
+            assert False
             for rule_id, rule in zip(valid_actions_ids, valid_actions_rules):
                 rule_type, rule_id = rule_id
                 lhs, rhs = rule.split(' -> ')
@@ -91,6 +104,8 @@ class SqlState:
                 #         actions_to_remove[rule_type].add(rule_id)
 
         if current_clause in ['join_clause']:
+            # I think this if is useless:
+            assert False
             for rule_id, rule in zip(valid_actions_ids, valid_actions_rules):
                 rule_type, rule_id = rule_id
                 lhs, rhs = rule.split(' -> ')
@@ -111,6 +126,8 @@ class SqlState:
                             actions_to_remove[rule_type].add(rule_id)
 
         if current_clause in ['select_core']:
+            # I think this if is useless:
+            assert False
             for rule_id, rule in zip(valid_actions_ids, valid_actions_rules):
                 rule_type, rule_id = rule_id
                 lhs, rhs = rule.split(' -> ')
@@ -171,6 +188,7 @@ class SqlState:
         #
         #     return valid_actions
 
+        # It will be the same as the input valid_actions in first round because there no need to remove any actions.
         return new_valid_actions
 
     @staticmethod

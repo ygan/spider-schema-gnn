@@ -45,6 +45,7 @@ class GrammarBasedState(State['GrammarBasedState']):
     grammar_state : ``List[GrammarStatelet]``
         This hold the current grammar state for each element of the group.  The ``GrammarStatelet``
         keeps track of which actions are currently valid.
+        One SQL correspond to one GrammarStatelet. One GrammarBasedState (can) correspond to one batch data.
     possible_actions : ``List[List[ProductionRule]]``
         The list of all possible actions that was passed to ``model.forward()``.  We need this so
         we can recover production strings, which we need to update grammar states.
@@ -149,7 +150,7 @@ class GrammarBasedState(State['GrammarBasedState']):
         So this function is not related to the obj itself.
 
         This function will combine the input state list to one state obj.
-        This function will be called when beam search the states.
+        This function will be called when beam search the states. It will be run before take_step function in a TransitionFunction.
         """
         batch_indices = [batch_index for state in states for batch_index in state.batch_indices]
         action_histories = [action_history for state in states for action_history in state.action_history]

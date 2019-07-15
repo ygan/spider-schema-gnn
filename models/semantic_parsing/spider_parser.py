@@ -215,6 +215,9 @@ class SpiderParser(Model):
             I also don't know what extra data means.
             But I think we can only use the data at the head whose shape is equal to linking_features, 
             which means we directly use the linking_features only.
+
+        action_sequence:
+            correct grammar for current sql.
         """
         batch_size = len(world)
         
@@ -225,14 +228,17 @@ class SpiderParser(Model):
         if action_sequence is not None:
             # Remove the trailing dimension (from ListField[ListField[IndexField]]).
             action_sequence = action_sequence.squeeze(-1)
-            action_mask = action_sequence != self._action_padding_index
+            action_seq_mask = action_sequence != self._action_padding_index
         else:
-            action_mask = None
+            action_seq_mask = None
 
         if self.training:
+            # Use the _transition_function to controle the decoding process and decode the initial_state.
+            # And then calc the loss between the decoding results and action_sequence.
             decode_output = self._decoder_trainer.decode(initial_state,
                                                          self._transition_function,
-                                                         (action_sequence.unsqueeze(1), action_mask.unsqueeze(1)))
+                                                         # supervision = (action_sequence.unsqueeze(1), action_seq_mask.unsqueeze(1)
+                                                         (action_sequence.unsqueeze(1), action_seq_mask.unsqueeze(1))) 
 
             return {'loss': decode_output['loss']}
         else:
@@ -242,7 +248,7 @@ class SpiderParser(Model):
                     loss = self._decoder_trainer.decode(initial_state,
                                                         self._transition_function,
                                                         (action_sequence.unsqueeze(1),
-                                                         action_mask.unsqueeze(1)))['loss']
+                                                         action_seq_mask.unsqueeze(1)))['loss']
                 except ZeroDivisionError:
                     # reached a dead-end during beam search
                     pass
@@ -650,9 +656,66 @@ class SpiderParser(Model):
                               entity_types: torch.Tensor,
                               entity_graph_encoding: torch.Tensor) -> GrammarStatelet:
         """
+        This function create a GrammarStatelet obj.
+        Every SQL correspond to one GrammarStatelet. One GrammarBasedState (can) correspond to one batch data.
+        This function generate a GrammarStatelet obj based on the dict-type-action (see dict-type-action in spider.py).
+        And then translate the string value-list to tensor. 
+        (String value-list -> index (through a vocabulary) -> embeding -> tensor )
+        But this process only support the global rules. So we will get different data between global and non-global.
+        Here, non-global is 'linked'.
+        Notice: There will not be 'global' and 'linked' appearing in one key although the program support this situation but the real world does not contain this.
+        So we can get the translated_valid_actions which base on dict-type-action and is the major information in GrammarStatelet.
+        translated_valid_actions:
+        {       #key_1       #key_2    #value-list
+               arg_list:{
+                            global:(
+                                        tensor_1. # embeding the value-list. Using action_embedder.
+                                            # Its shape: (number_of_value-list, embeding_dim_1). (2,201) or (2,200)
+                                            # number_of_value-list is 2 in 'arg_list', because there are two value-list for the key of 'arg_list'. (check it in spider.py).
+                                            # if self._add_action_bias is True, the embeding_dim_1 = 201; else, embeding_dim_1 = 200.
 
+                                        tensor_2. # embeding the value-list. Using output_action_embedder.
+                                            # Its shape: (number_of_value-list, embeding_dim_2). (2,200)
+                                            # self._add_action_bias makes no effect here. embeding_dim_2 always = 200.
+
+                                        list_1. # List the index of the value-list. I do not know whether it is the index in the vocabulary.
+                                            # But I am sure we can found the exact action through the index and the list-type-action. (see list-type-action in spider.py)
+                                            # As the same, the len(list_1) equal to number_of_value-list (2).
+                            )
+                        }
+                column_name:{
+                            linked:(
+                                        tensor_1. # entity_link_utterance_scores
+                                            # Its shape is (number_of_value-list, number_utterance_token)
+                                            # number_of_value-list is the number of columns in all tables in the database for the key 'column_name'.
+                                            # It represent the similarity between columns and the utterance.
+
+                                        tensor_2. # entity_graph_embeddings
+                                            # Shape: (number_of_value-list, dim_of_entity_graph_embeddings). (number_of_value-list, 200)
+                                            # Notice: number_of_value-list do not equal to the number of the entities (nodes).
+                                            #         entities (nodes) include the column (name) and the table (table) in this code.
+                                        
+                                        list_1.   # List the index of the value-list for 'column_name'. I think these indices have no relationship with the vocabulary.
+                                            # I am sure we can found the exact action through the index and the list-type-action. (see list-type-action in spider.py)
+                                            # As the same, the len(list_1) equal to number_of_value-list.
+
+                                        tensor_3. # entity_self_linking_scores
+                                            # It will appear when self._self_attend is True.
+                                            # Shape: (number_of_value-list, number_of_entities).
+                                            # (number_of_entities - number_of_value-list) equal to the number_of_table here, 
+                                            # because the number_of_value-list equal to number_of_column for the key 'column_name'. 
+                                            # And the entities (nodes) always include the column (name) and the table (table).
+                                            # So it means the similarity between the column_name and entities (nodes).
+                                            # Since the entities (nodes) include the column_name information, so it call self attention.
+                            )
+                }
+                           
+               ...: {....}
+               ... 
+        }
+        
         possible_actions:
-            The action appear in the current SQL. The detailed of this obj, please see the end of the spider.py.
+            The total actions can be appeared in the current SQL. The detailed of this obj, please see the end of the spider.py.
         linking_scores:
             Node linking to utterance.
             the similarity between utterance and node. shape: (node_num, utterance_num)
@@ -701,6 +764,10 @@ class SpiderParser(Model):
                 global_action_tensor = torch.cat(global_action_tensors, dim=0).to(
                     global_action_tensors[0].device).long() # cat the dim=0, and then to GPU, and then to long tensor.
 
+                # global_input_embeddings is used for calc the similarity with the predicted_action_embedding.
+                # We can choose the higher similarity one as the correct prediction.
+                # global_output_embeddings is used for the make_state function in AttendPastSchemaItemsTransitionFunction or BasicTransitionFunction.
+                # It will become the new RnnStatelet.previous_action_embedding for tje mew state.
                 global_input_embeddings = self._action_embedder(global_action_tensor)
                 global_output_embeddings = self._output_action_embedder(global_action_tensor)
                 translated_valid_actions[key]['global'] = (global_input_embeddings,
@@ -740,7 +807,8 @@ class SpiderParser(Model):
                                                                entity_type_embeddings,
                                                                list(linked_action_ids))
 
-        return GrammarStatelet(['statement'],
+        # The translated_valid_actions is 
+        return GrammarStatelet(['statement'],       # This is the first (start) symbol in SQL grammar (action) which is: 'statement -> [query, iue, query]' and 'statement -> [query]'.
                                translated_valid_actions,
                                self.is_nonterminal) # self.is_nonterminal is a callable function for GrammarStatelet
 

@@ -40,6 +40,8 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
         self._past_attention = past_attention
         self._ent2ent_ff = FeedForward(1, 1, 1, Activation.by_name('linear')())
 
+
+
     @overrides
     def take_step(self,
                   state: GrammarBasedState,
@@ -50,14 +52,23 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
         Automatically called by the beam search.
 
         state:
-            all state include all batch.
+            all state include all batch. have already been combined.
         max_actions:
             beam_size.
         allowed_actions:
-            next correct action. learn from correct action ???
+            There are too many names to make people feel confusion. 
+            allowed_actions come from the action_sequence in SpiderParser.forward() and also from supervision in MaximumMarginalLikelihood.decode()
+            There are almost the same but using different names. Bad namespace.
+            So, we should use the allowed_actions to calc the loss.
+            It is the correct answer including the actions (grammar) and SQL. SQL can be generated from the action. 
+            Because the actions (grammar) include the specific (table,column name) and global rules.
+            From it, we can understand the problem here is how to learn to generate the correct actions (grammar).
+
+            Notice: allowed_actions is only the allowed actions for next action. It is part of the action_sequence.
+                    allowed_actions is [ {action_index_1, ...} , {...} ]
         """
 
-        # _predict_start_type_separately equal to predict_start_type_separately. It is False in training.
+        # _predict_start_type_separately equal to predict_start_type_separately. It is always False in training.
         if self._predict_start_type_separately and not state.action_history[0]:
             # The wikitables parser did something different when predicting the start type, which
             # is our first action.  So in this case we break out into a different function.  We'll
@@ -81,7 +92,7 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                                                  updated_state,
                                                  batch_results,
                                                  max_actions,
-                                                 allowed_actions)
+                                                 allowed_actions) # correct answer include
 
         return new_states
 
@@ -169,10 +180,14 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
         projected_query = self._activation(self._output_projection_layer(action_query))
         predicted_action_embeddings = self._dropout(projected_query)
 
-        if self._add_action_bias: # ???
+        if self._add_action_bias:
             # NOTE: It's important that this happens right before the dot product with the action
             # embeddings.  Otherwise this isn't a proper bias.  We do it here instead of right next
-            # to the `.mm` below just so we only do it once for the whole group.
+            # to the `action_embeddings.mm` below just so we only do it once for the whole group.
+
+            # The dimension of the action embeding () is 201 if self._add_action_bias is True, else is 200. See code in spider_parser.py 
+            # So here need to add one more dim to predicted_action_embeddings to calc the dot product or add.
+            # But I still do not know why the bias should add one dim. ???
             ones = predicted_action_embeddings.new([[1] for _ in range(group_size)])
             predicted_action_embeddings = torch.cat([predicted_action_embeddings, ones], dim=-1)
             
@@ -184,6 +199,8 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                 'past_schema_items_attention_weights': past_schema_items_attention_weights, # None in the first step
                 'predicted_action_embeddings': predicted_action_embeddings,                 #
                 }
+
+
 
     @overrides
     def _compute_action_probabilities(self,
@@ -199,12 +216,36 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
         # adds too much complexity and doesn't speed things up, anyway, with the operations we're
         # doing here.  This means we don't need any action masks, as we'll only get the right
         # lengths for what we're computing.
+        """
+        state:
+            original combined state.
+        hidden_state:
+            decoder hidden_state
+        attention_weights:
+            decoder attention_weights
+        past_schema_items_attention_weights:
+            decoder past_schema_items_attention_weights but initial value is none.
+        predicted_action_embeddings:
+            decoder hidden_state + attended_question + 1???. attended_question calc from attention_weights + encoder_outputs
+        """
 
         group_size = len(state.batch_indices)
-        actions = state.get_valid_actions()
+
+        # The function name in here is ambiguous. Actually, here only get the next action.
+        # For the first step, it will get the action start with 'statement', 
+        # including: 'statement -> [query, iue, query]' and 'statement -> [query]'.
+        # So the actions[0] is: ( PS: [0] means the first element in the list obj actions)
+        # {
+        #    'global':(
+        #                   tensor_1,
+        #                   tensor_2,
+        #                   list_1     # (about these three obj please see _create_grammar_state function in spider_parser.py)
+        #     )
+        # }
+        actions = state.get_valid_actions() # all actions.
 
         batch_results: Dict[int, List[Tuple[int, Any, Any, Any, List[int]]]] = defaultdict(list)
-        for group_index in range(group_size):
+        for group_index in range(group_size): # Batch
             batch_id = state.batch_indices[group_index]
             instance_actions = actions[group_index]
             predicted_action_embedding = predicted_action_embeddings[group_index]
@@ -219,7 +260,8 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
             if 'global' in instance_actions:
                 action_embeddings, output_action_embeddings, embedded_actions = instance_actions['global']
                 # This is just a matrix product between a (num_actions, embedding_dim) matrix and an
-                # (embedding_dim, 1) matrix.
+                # (embedding_dim, 1) matrix. The shape of embedded_action_logits is (num_actions).
+                # embedded_action_logits is the similarity between the predicted_action_embedding and action_embeddings.
                 embedded_action_logits = action_embeddings.mm(predicted_action_embedding.unsqueeze(-1)).squeeze(-1)
                 action_ids = embedded_actions
 
@@ -264,22 +306,26 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
             elif not instance_actions:
                 action_ids = None
                 current_log_probs = float('inf')
-            else:
+            else: # "global" will run this else:
+                # Calc the action probability in the next global action.
                 action_logits = embedded_action_logits
                 current_log_probs = torch.nn.functional.log_softmax(action_logits, dim=-1)
 
             # This is now the total score for each state after taking each action.  We're going to
             # sort by this later, so it's important that this is the total score, not just the
             # score for the current action.
+            # Initial state.score is 0.
             log_probs = state.score[group_index] + current_log_probs
             batch_results[state.batch_indices[group_index]].append((group_index,
                                                                     log_probs,
                                                                     current_log_probs,
-                                                                    output_action_embeddings,
+                                                                    output_action_embeddings, # As action_embedding in _construct_next_states
                                                                     action_ids,
                                                                     linked_action_logits_encoder,
                                                                     linked_action_ent2ent_logits))
         return batch_results
+
+
 
     def _construct_next_states(self,
                                state: GrammarBasedState,
@@ -287,6 +333,22 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                                batch_action_probs: Dict[int, List[Tuple[int, Any, Any, Any, List[int]]]],
                                max_actions: int,
                                allowed_actions: List[Set[int]]):
+        """
+        state:
+            Initial state. encoder state.
+
+        updated_rnn_state:
+            It is created from _update_decoder_state function. updated_rnn_state is the decoder state.
+
+        batch_action_probs:
+            The probability of next action.
+        
+        max_actions:
+            beam_size. It is 1 during training.
+
+        allowed_actions:
+            Correct results for supervision.
+        """
         # pylint: disable=no-self-use
 
         # We'll yield a bunch of states here that all have a `group_size` of 1, so that the
@@ -304,6 +366,7 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
         group_size = len(state.batch_indices)
 
         chunk_index = 1 if self._num_layers > 1 else 0
+        # Make tensor become list according to batch index.
         hidden_state = [x.squeeze(chunk_index)
                         for x in updated_rnn_state['hidden_state'].chunk(group_size, chunk_index)]
         memory_cell = [x.squeeze(chunk_index)
@@ -311,10 +374,21 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
 
         attended_question = [x.squeeze(0) for x in updated_rnn_state['attended_question'].chunk(group_size, 0)]
 
+        ########################   make_state   ########################
         def make_state(group_index: int,
                        action: int,
                        new_score: torch.Tensor,
                        action_embedding: torch.Tensor) -> GrammarBasedState:
+            """
+            group_index:
+                batch index
+            action:
+                next action index (created based on the allowed actions[supervision])
+            new_score:
+                log probability of the next action. So it must be a negative score.
+            action_embedding:
+                come from 'output_action_embeddings' in '_compute_action_probabilities'
+            """
             batch_index = state.batch_indices[group_index]
 
             decoder_outputs = state.rnn_state[group_index].decoder_outputs
@@ -353,10 +427,11 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                                                     considered_lsq,
                                                     considered_lsp
                                                     )
+        ########################   make_state   ########################
 
         new_states = []
         for _, results in batch_action_probs.items():
-            if allowed_actions and not max_actions:
+            if allowed_actions and not max_actions: # max_actions = 0 or none means no beam search.
                 # If we're given a set of allowed actions, and we're not just keeping the top k of
                 # them, we don't need to do any sorting, so we can speed things up quite a bit.
                 for group_index, log_probs, _, action_embeddings, actions in results:
@@ -385,7 +460,10 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                 log_probs = torch.cat(group_log_probs, dim=0)
                 action_embeddings = torch.cat(group_action_embeddings, dim=0)
                 log_probs_cpu = log_probs.data.cpu().numpy().tolist()
-                batch_states = [(log_probs_cpu[i],
+
+                # Run the 'for' and then run 'if'. if the 'if' is True, give the tuple to the list.
+                # Only keep the allowed_actions for allowed_act_in_one_case. So allowed_act_in_one_case is the correct state.
+                allowed_act_in_one_case = [(log_probs_cpu[i],
                                  group_indices[i],
                                  log_probs[i],
                                  action_embeddings[i],
@@ -393,11 +471,15 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                                 for i in range(len(group_actions))
                                 if (not allowed_actions or
                                     group_actions[i] in allowed_actions[group_indices[i]])]
+
                 # We use a key here to make sure we're not trying to compare anything on the GPU.
-                batch_states.sort(key=lambda x: x[0], reverse=True)
-                if max_actions:
-                    batch_states = batch_states[:max_actions]
-                for _, group_index, log_prob, action_embedding, action in batch_states:
+                # Notice: Although 
+                allowed_act_in_one_case.sort(key=lambda x: x[0], reverse=True) # reverse=True: From big to small.
+                assert len(allowed_act_in_one_case) == 1 # This is for test. I think it is hard to have several allowed_act_in_one_case. 
+                
+                if max_actions: # max_actions is 1 in training, and python allow the max_actions bigger than the len(allowed_act_in_one_case)
+                    allowed_act_in_one_case = allowed_act_in_one_case[:max_actions]
+                for _, group_index, log_prob, action_embedding, action in allowed_act_in_one_case:
                     new_states.append(make_state(group_index, action, log_prob, action_embedding))
         return new_states
 

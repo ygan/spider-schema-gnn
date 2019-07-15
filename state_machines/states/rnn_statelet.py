@@ -25,6 +25,7 @@ class RnnStatelet:
     previous_action_embedding : ``torch.Tensor``
         This holds the embedding for the action we took at the last timestep (which gets input to
         the decoder).  Has shape ``(action_embedding_dim,)``.
+        It is the 'global_output_embeddings' in spider_parser.py (only for the first step ???).
     attended_input : ``torch.Tensor``
         This holds the attention-weighted sum over the input representations that we computed in
         the previous timestep.  We keep this as part of the state because we use the previous
