@@ -50,6 +50,7 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
 
         """
         Automatically called by the beam search.
+        Running times depend on how many actions you need to decode. (every time, the state include the whole batch)
 
         state:
             all state include all batch. have already been combined.
@@ -164,15 +165,19 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
         # TODO: Can batch this (need to save ids of states with saved outputs)
         past_schema_items_attention_weights = []
         for i, rnn_state in enumerate(state.rnn_state):
-            if rnn_state.decoder_outputs is not None:   # Initial is None because there is not decoding before running this decoder
+            if rnn_state.decoder_outputs is not None:  # it means we have already meet the linked action. 
+                # Initial is None because there is not decoding before running this decoder
+                # rnn_state.decoder_outputs will keep None if last action is global action until it meet the linked action.
+                # What is decoder_outputs, please see state_machines/states/rnn_statelet.py.
+                # Although past_schema_items_attention_weights will be get some value from here, but we may not use it.
+                # rnn_state.decoder_outputs store all linked action state (column/table state) we have used. That is why it call past_schema_items.
+                # So past_schema_items_attention_weights means the similarity/distance/attention between used schema and decoder hidden state now.
                 decoder_outputs_states, decoder_outputs_ids = rnn_state.decoder_outputs
-                attn_weights = self.attend(self._past_attention, hidden_state[i].unsqueeze(0),
+                attn_weights = self.attend(self._past_attention, hidden_state[i].unsqueeze(0), # _past_attention is dot product attention
                                            decoder_outputs_states.unsqueeze(0), None).squeeze(0)
                 past_schema_items_attention_weights.append((attn_weights, decoder_outputs_ids))
-            else:
+            else: # None linked action means none schema have been used, so it is None.
                 past_schema_items_attention_weights.append(None)
-
-        # past_schema_items_attention_weights = torch.stack(past_schema_items_attention_weights)
 
         # (group_size, action_embedding_dim)
         # _output_projection_layer is a nn (output_dim + encoder_output_dim, action_embedding_dim) which is (1200,200) when there is gnn
@@ -279,16 +284,22 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                                              for a in past_items_action_ids]
 
                     # we are only interested about the scores of the entities the decoder has already output
+                    # past_entity_linking_scores and entity_action_linking_scores are entity_self_linking_scores.
                     past_entity_linking_scores = entity_action_linking_scores[:, past_schema_items_ids]
 
+                    # Similarity between previous entity_self_linking_scores and hidden_state_linking_schema_score.
+                    # It should be some relationship. So you can consider it is a constrain here. Good design!!!
                     linked_action_ent2ent_logits = past_entity_linking_scores.mm(
                         past_items_attention_weights.unsqueeze(-1)).squeeze(-1)
                     linked_action_ent2ent_logits = self._ent2ent_ff(linked_action_ent2ent_logits.unsqueeze(-1)).squeeze(1)
                 else:
                     linked_action_ent2ent_logits = 0
-
+                
+                # linking_scores is entity_link_utterance_scores
+                # linked_action_logits_encoder is the similarity between entity and attention_weights. (The higher the better)
                 linked_action_logits_encoder = linking_scores.mm(attention_weights[group_index].unsqueeze(-1)).squeeze(-1)
                 linked_action_logits = linked_action_logits_encoder + linked_action_ent2ent_logits
+
 
                 # The `output_action_embeddings` tensor gets used later as the input to the next
                 # decoder step.  For linked actions, we don't have any action embedding, so we use
@@ -298,7 +309,8 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                 else:
                     output_action_embeddings = type_embeddings
 
-                if embedded_action_logits is not None:
+                if embedded_action_logits is not None: # Normally is None
+                    assert False
                     action_logits = torch.cat([embedded_action_logits, linked_action_logits], dim=-1)
                 else:
                     action_logits = linked_action_logits
@@ -385,28 +397,45 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
             action:
                 next action index (created based on the allowed actions[supervision])
             new_score:
-                log probability of the next action. So it must be a negative score.
+                is log probability (log_probs) of the action to now. So it must be a negative score.
+                Calc log_probs in _compute_action_probabilities function, as follow:
+                (new_score = ) log_probs = state.score[group_index] + current_log_probs
+                log_probs is a accumulated value that accumulate the scores (new_score will become the scores in next round).
+                Actually, the score is also used as the loss value.
             action_embedding:
                 come from 'output_action_embeddings' in '_compute_action_probabilities'
             """
+
+            # state is the Initial state. encoder state.
+            # This function can access the parameter in _construct_next_states.
             batch_index = state.batch_indices[group_index]
 
+            # Initial state.rnn_state do not contain the decoder_outputs.
+            # Because the state is encoder state and there is no decoder in spider_parser.py that create the initial state.
+            # But we can give a decoder_outputs to the new state in this function. So next time, the decoder_outputs will be not None. 
+            # But for the first time, decoder_outputs is None. If the next action is still the global action, it will keep None.
+            # What is decoder_outputs, please see state_machines/states/rnn_statelet.py.
             decoder_outputs = state.rnn_state[group_index].decoder_outputs
             is_linked_action = not state.possible_actions[batch_index][action][1]
-            if is_linked_action:
+            if is_linked_action: # non-global action, so store the hidden state.
                 if decoder_outputs is None:
                     decoder_outputs = hidden_state[group_index].unsqueeze(0), [action]
-                else:
+                else: # store all hidden_state, so use torch.cat
                     decoder_outputs_states, decoder_outputs_ids = decoder_outputs
                     decoder_outputs = torch.cat((
                         decoder_outputs_states,
                         hidden_state[group_index].unsqueeze(0)
                     ), dim=0), decoder_outputs_ids + [action]
 
-            new_rnn_state = RnnStatelet(hidden_state[group_index],
-                                        memory_cell[group_index],
+            # Create a new RnnStatelet to instead of the old one.
+            new_rnn_state = RnnStatelet(hidden_state[group_index], # updated_state['hidden_state'],
+                                        memory_cell[group_index],  # updated_state['memory_cell']
+
+                                        # It come from 'output_action_embeddings' in '_compute_action_probabilities'
+                                        # It is the embeding from self._output_action_embedder if last action is 'global'.
                                         action_embedding,
-                                        attended_question[group_index],
+
+                                        attended_question[group_index], # updated_state['attended_question']
                                         state.rnn_state[group_index].encoder_outputs,
                                         state.rnn_state[group_index].encoder_output_mask,
                                         decoder_outputs)
@@ -417,6 +446,8 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                     considered_lsq = lsq
                     considered_lsp = lsp
                     break
+                else:
+                    assert False # I think it will not be false
             return state.new_state_from_group_index(group_index,
                                                     action,
                                                     new_score,
@@ -434,6 +465,7 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
             if allowed_actions and not max_actions: # max_actions = 0 or none means no beam search.
                 # If we're given a set of allowed actions, and we're not just keeping the top k of
                 # them, we don't need to do any sorting, so we can speed things up quite a bit.
+                assert False
                 for group_index, log_probs, _, action_embeddings, actions in results:
                     for log_prob, action_embedding, action in zip(log_probs, action_embeddings, actions):
                         if action in allowed_actions[group_index]:
@@ -463,6 +495,17 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
 
                 # Run the 'for' and then run 'if'. if the 'if' is True, give the tuple to the list.
                 # Only keep the allowed_actions for allowed_act_in_one_case. So allowed_act_in_one_case is the correct state.
+                # Notice:
+                # Notice:
+                # The supervision logic:
+                # We only keep the allowed_actions for next decoding process. This is supervision similar to the translation system.
+                # For example, supposing we have two action (action_1: {log_probs:-0.9}; action_2: {log_probs:-0.09})
+                # Normally, we should keep the action_2 since its probability is higher. However, the allowed_actions is action_1.
+                # So we only keep the action_1: {log_probs:-0.9}. And we know that the log_probs is also the loss and will be accumulated during decoding.
+                # So in this case, we will get a higher loss.
+                # If the allowed_actions is both action_1 and action_2, then will get the two action. 
+                # But we only keep one action in training, so finally we will only keep the action_2 and we will get a small loss.
+                # It look like the decoder trainer (in MaximumMarginalLikelihood.py) will make the negative loss value become positive. 
                 allowed_act_in_one_case = [(log_probs_cpu[i],
                                  group_indices[i],
                                  log_probs[i],
@@ -473,12 +516,15 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                                     group_actions[i] in allowed_actions[group_indices[i]])]
 
                 # We use a key here to make sure we're not trying to compare anything on the GPU.
-                # Notice: Although 
+                # Notice: ConstrainedBeamSearch.search() need us to sort the state in take_step function. 
                 allowed_act_in_one_case.sort(key=lambda x: x[0], reverse=True) # reverse=True: From big to small.
                 assert len(allowed_act_in_one_case) == 1 # This is for test. I think it is hard to have several allowed_act_in_one_case. 
                 
+                # ConstrainedBeamSearch.search() will do the same thing as follow.
+                # But it is fine to do several times.
                 if max_actions: # max_actions is 1 in training, and python allow the max_actions bigger than the len(allowed_act_in_one_case)
                     allowed_act_in_one_case = allowed_act_in_one_case[:max_actions]
+
                 for _, group_index, log_prob, action_embedding, action in allowed_act_in_one_case:
                     new_states.append(make_state(group_index, action, log_prob, action_embedding))
         return new_states

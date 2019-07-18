@@ -41,10 +41,17 @@ class RnnStatelet:
         mask unmodified, regardless of what's in the grouping for this state.  We'll use the
         ``batch_indices`` for the group to pull pieces out of these lists when we're ready to
         actually do some computation.
+
     encoder_output_mask : ``List[torch.Tensor]``
         A list of variables, each of shape ``(input_sequence_length,)``, containing a mask over
         question tokens for each batch instance.  This is a list over batch elements, for the same
         reasons as above.
+
+
+    decoder_outputs : ``List[torch.Tensor]``
+        The first value for decoder_outputs appear in the make_state function of attend_past_schema_items_transition.py
+        It happen because the action is a linked action. So the real name of decoder_outputs is: ALL_LINKED_ACTION_HIDDEN_STATE.
+        This attribute will store the updated_rnn_state['hidden_state'] for all linked action. all!!
     """
     def __init__(self,
                  hidden_state: torch.Tensor,

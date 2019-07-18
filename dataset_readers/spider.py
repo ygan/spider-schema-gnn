@@ -29,7 +29,7 @@ class SpiderDatasetReader(DatasetReader):
                  keep_if_unparsable: bool = True,
                  tables_file: str = None,
                  dataset_path: str = 'dataset/database',
-                 load_cache: bool = False,
+                 load_cache: bool = True,
                  save_cache: bool = False,
                  loading_limit = -1):
         

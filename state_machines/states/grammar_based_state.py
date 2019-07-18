@@ -17,8 +17,11 @@ class GrammarBasedState(State['GrammarBasedState']):
     """
     A generic State that's suitable for most models that do grammar-based decoding.  We keep around
     a `group` of states, and each element in the group has a few things: a batch index, an action
-    history, a score, an ``RnnStatelet``, and a ``GrammarStatelet``.  We additionally have some
-    information that's independent of any particular group element: a list of all possible actions
+    history, a score, an ``RnnStatelet``, and a ``GrammarStatelet``. Notice: one GrammarBasedState obj
+    contain a `group` of states, which means it contain all state in one batch. And each element is 
+    each data case (example or utterance-SQL pair). So you will find the attribute in here are list.
+    
+     We additionally have some information that's independent of any particular group element: a list of all possible actions
     for all batch instances passed to ``model.forward()``, and a ``extras`` field that you can use
     if you really need some extra information about each batch instance (like a string description,
     or other metadata).
@@ -36,8 +39,11 @@ class GrammarBasedState(State['GrammarBasedState']):
         Passed to super class; see docs there.
     action_history : ``List[List[int]]``
         Passed to super class; see docs there.
+        It will be generated during the decoding process. It can check the decoding path.
+        For example, I am decoding the 'select' section now, I need to know what contents before this 'select' section.
     score : ``List[torch.Tensor]``
         Passed to super class; see docs there. initial value is 0.
+        It is also the loss value.
     rnn_state : ``List[RnnStatelet]``
         An ``RnnStatelet`` for every group element.  This keeps track of the current decoder hidden
         state, the previous decoder output, the output from the encoder (for computing attentions),
@@ -73,7 +79,11 @@ class GrammarBasedState(State['GrammarBasedState']):
                  action_entity_mapping: List[Dict[int, int]],
                  extras: List[Any] = None,
                  debug_info: List = None) -> None:
+
+        # There are following code in super() function:
+        # self.batch_indices = batch_indices
         super().__init__(batch_indices, action_history, score)
+
         self.rnn_state = rnn_state
         self.grammar_state = grammar_state
         self.sql_state = sql_state
@@ -92,11 +102,28 @@ class GrammarBasedState(State['GrammarBasedState']):
                                    attention_weights: torch.Tensor = None,
                                    linking_scores_qst: torch.Tensor = None,
                                    linking_scores_past: torch.Tensor = None) -> 'GrammarBasedState':
+        """
+        Construct a new GrammarBasedState that only contain one element, including construct a new GrammarStatelet and SqlState.
+        """
         batch_index = self.batch_indices[group_index]
         new_action_history = self.action_history[group_index] + [action]
         production_rule = self.possible_actions[batch_index][action][0]
+
+        # Using GrammarStatelet obj to construct a new GrammarStatelet obj.
+        # We use this function to expand the _nonterminal_stack that store the nonterminal action tokens.
+        # For example, production_rule is 'd -> [<e,d>, e]' and _nonterminal_stack is ["r", "<e,r>", "d"].
+        # Then we will use [<e,d>, e] to instead of the "d" in _nonterminal_stack.
+        # Then the _nonterminal_stack become: ["r", "<e,r>", "<e,d>", "e"].
+        # But if the production_rule is 'd -> [terminal_action]', the _nonterminal_stack will become ["r", "<e,r>"]. 
+        # Because _nonterminal_stack only store the nonterminal_action.
+        # Every time, the right side of production_rule should equal to the _nonterminal_stack[-1].
+        # If the _nonterminal_stack become empty, it means there are no more nonterminal_action and the decoding process is end.
+        # One more thing, the original _nonterminal_stack = ['statement'] which is the start point of a SQL.
         new_grammar_state = self.grammar_state[group_index].take_action(production_rule)
+
+        # Using SqlState obj to construct a new SqlState obj.
         new_sql_state = self.sql_state[group_index].take_action(production_rule)
+
         if self.debug_info is not None:
             attention = attention_weights[group_index] if attention_weights is not None else None
             # output_attention = output_attention_weights[group_index] if output_attention_weights is not None else None
@@ -140,7 +167,9 @@ class GrammarBasedState(State['GrammarBasedState']):
     def is_finished(self) -> bool:
         if len(self.batch_indices) != 1:
             raise RuntimeError("is_finished() is only defined with a group_size of 1")
-        return self.grammar_state[0].is_finished()
+        # grammar_state[0] is GrammarStatelet
+        # return not self._nonterminal_stack # in GrammarStatelet
+        return self.grammar_state[0].is_finished() 
 
     @classmethod
     def combine_states(cls, states: Sequence['GrammarBasedState']) -> 'GrammarBasedState':

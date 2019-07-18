@@ -660,6 +660,7 @@ class SpiderParser(Model):
         Every SQL correspond to one GrammarStatelet. One GrammarBasedState (can) correspond to one batch data.
         This function generate a GrammarStatelet obj based on the dict-type-action (see dict-type-action in spider.py).
         And then translate the string value-list to tensor. 
+        Value-list is possible action in global or possible column/table in linked.
         (String value-list -> index (through a vocabulary) -> embeding -> tensor )
         But this process only support the global rules. So we will get different data between global and non-global.
         Here, non-global is 'linked'.

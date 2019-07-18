@@ -72,7 +72,7 @@ class SpiderKnowledgeGraphField(KnowledgeGraphField):
          
 
         # hack needed to fix calculation of feature extractors in the inherited as_tensor method
-        self._feature_extractors = feature_extractors * 2 # I think here is also useless ??????
+        self._feature_extractors = feature_extractors * 2 # I think here is also useless ???
 
 
     # Here is not the overrides of "_compute_linking_features" that is the original function for calculating the linking_features. 
