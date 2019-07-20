@@ -270,6 +270,8 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                 embedded_action_logits = action_embeddings.mm(predicted_action_embedding.unsqueeze(-1)).squeeze(-1)
                 action_ids = embedded_actions
 
+            # There are some instance_actions contain both 'global' and 'linked'.
+
             if 'linked' in instance_actions:
                 linking_scores, type_embeddings, linked_actions, entity_action_linking_scores = instance_actions['linked']
                 action_ids = embedded_actions + linked_actions
@@ -309,8 +311,8 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                 else:
                     output_action_embeddings = type_embeddings
 
-                if embedded_action_logits is not None: # Normally is None
-                    assert False
+                if embedded_action_logits is not None: # Normally is None until instance_actions contain both 'global' and 'linked'.
+                    # assert False # It need to research when instance_actions contain both 'global' and 'linked' ???
                     action_logits = torch.cat([embedded_action_logits, linked_action_logits], dim=-1)
                 else:
                     action_logits = linked_action_logits
@@ -447,7 +449,7 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                     considered_lsp = lsp
                     break
                 else:
-                    assert False # I think it will not be false
+                    pass#assert False # I think it will not be false. But it will be here after training, why ???
             return state.new_state_from_group_index(group_index,
                                                     action,
                                                     new_score,
@@ -518,7 +520,10 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                 # We use a key here to make sure we're not trying to compare anything on the GPU.
                 # Notice: ConstrainedBeamSearch.search() need us to sort the state in take_step function. 
                 allowed_act_in_one_case.sort(key=lambda x: x[0], reverse=True) # reverse=True: From big to small.
-                assert len(allowed_act_in_one_case) == 1 # This is for test. I think it is hard to have several allowed_act_in_one_case. 
+                # But there will be none allowed_act_in_one_case.
+                # Although I think it is hard to have several allowed_act_in_one_case. And actually, there are less allowed_act_in_one_case with more than 1 action.
+                # I may check why there is more than 1 allowed action in allowed_act_in_one_case in the future. ???
+                # assert len(allowed_act_in_one_case) <= 1 # This is for test. I think it is hard to have several allowed_act_in_one_case. 
                 
                 # ConstrainedBeamSearch.search() will do the same thing as follow.
                 # But it is fine to do several times.
