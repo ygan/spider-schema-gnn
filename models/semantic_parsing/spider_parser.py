@@ -126,8 +126,10 @@ class SpiderParser(Model):
         torch.nn.init.uniform_(self._linking_params.weight, 0, 1)
 
         num_edge_types = 3
-        self._gnn = GatedGraphConv(self._embedding_dim, gnn_timesteps, num_edge_types=num_edge_types, dropout=dropout)
-
+        if gnn:
+            self._gnn = GatedGraphConv(self._embedding_dim, gnn_timesteps, num_edge_types=num_edge_types, dropout=dropout)
+        else:
+            self._gnn = None
         self._decoder_num_layers = decoder_num_layers
 
         self._beam_search = decoder_beam_search
@@ -241,7 +243,7 @@ class SpiderParser(Model):
                                                          (action_sequence.unsqueeze(1), action_seq_mask.unsqueeze(1))) 
 
             return {'loss': decode_output['loss']}
-        else:
+        else: # validation 
             loss = torch.tensor([0]).float().to(device)
             if action_sequence is not None and action_sequence.size(1) > 1:
                 try:
@@ -412,7 +414,7 @@ class SpiderParser(Model):
         else:
             entities_graph_encoding = None
 
-        if self._self_attend:
+        if self._self_attend and entities_graph_encoding:
             # linked_actions_linking_scores = self._get_linked_actions_linking_scores(actions, entities_graph_encoding)
 
             # _ent2ent_ff is just a activated function of relu
@@ -1005,11 +1007,23 @@ class SpiderParser(Model):
                                     world: List[SpiderWorld],
                                     target_list: List[List[str]],
                                     outputs: Dict[str, Any]) -> None:
+        """
+        actions:
+            all possible actions
+        best_final_states:
+            best 10(beam size) state
+        world:
+            SpiderWorld obj for this sql
+        target_list:
+            correct action index list. The index point to the actions obj.
+        outputs:
+            update this obj for function output
+        """
         batch_size = len(actions)
 
         outputs['predicted_sql_query'] = []
 
-        action_mapping = {}
+        action_mapping = {} # action_mapping[(batch_index,action_index)] can get the action value
         for batch_index, batch_actions in enumerate(actions):
             for action_index, action in enumerate(batch_actions):
                 action_mapping[(batch_index, action_index)] = action[0]
