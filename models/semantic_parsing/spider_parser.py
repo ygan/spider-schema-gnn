@@ -50,7 +50,7 @@ class SpiderParser(Model):
                  decoder_self_attend: bool = True,          # True
                  gnn_timesteps: int = 2,                    # 2
                  parse_sql_on_decoding: bool = True,        # True
-                 add_action_bias: bool = True,              # True. Not define in jsonnet file.
+                 add_action_bias: bool = False,              # True. Not define in jsonnet file.
                  use_neighbor_similarity_for_linking: bool = True, # True
                  dataset_path: str = 'dataset',             # dataset_path in jsonnet
                  training_beam_size: int = None,            # 1
@@ -414,7 +414,7 @@ class SpiderParser(Model):
         else:
             entities_graph_encoding = None
 
-        if self._self_attend and entities_graph_encoding:
+        if self._self_attend and entities_graph_encoding is not None:
             # linked_actions_linking_scores = self._get_linked_actions_linking_scores(actions, entities_graph_encoding)
 
             # _ent2ent_ff is just a activated function of relu
@@ -1067,14 +1067,21 @@ class SpiderParser(Model):
                     self._acc_single(sql_evaluator_match)
 
             beam_hit = False
+            beam_sql_query = ""
+            outputs['beam_sql_query'] = []
             for pos, final_state in enumerate(best_final_states[i]):
                 action_indices = final_state.action_history[0]
                 action_strings = [action_mapping[(i, action_index)]
                                   for action_index in action_indices]
                 candidate_sql_query = action_sequence_to_sql(action_strings, add_table_names=True)
 
+                if candidate_sql_query:
+                    beam_sql_query += ":" + sqlparse.format(candidate_sql_query, reindent=False) + "\t" + str(final_state.score[0].detach().cpu().numpy()) + "\n"
+                
                 if target_list is not None:
                     correct = self._evaluate_func(original_gold_sql_query, candidate_sql_query, world[i].db_id)
+
                     if correct:
                         beam_hit = True
                     self._beam_hit(beam_hit)
+            outputs['beam_sql_query'].append(beam_sql_query)

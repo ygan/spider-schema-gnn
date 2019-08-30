@@ -317,7 +317,7 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                 else:
                     action_logits = linked_action_logits
                 current_log_probs = torch.nn.functional.log_softmax(action_logits, dim=-1)
-            elif not instance_actions:
+            elif not instance_actions: # It will be true during validation
                 action_ids = None
                 current_log_probs = float('inf')
             else: # "global" will run this else:
@@ -337,13 +337,14 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                                                                     action_ids,
                                                                     linked_action_logits_encoder,
                                                                     linked_action_ent2ent_logits))
-        return batch_results
+        return batch_results # become the batch_action_probs for _construct_next_states
 
 
 
     def _construct_next_states(self,
                                state: GrammarBasedState,
                                updated_rnn_state: Dict[str, torch.Tensor],
+                               # batch_action_probs is batch_results
                                batch_action_probs: Dict[int, List[Tuple[int, Any, Any, Any, List[int]]]],
                                max_actions: int,
                                allowed_actions: List[Set[int]]):
@@ -479,7 +480,7 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                 group_log_probs: List[torch.Tensor] = []
                 group_action_embeddings = []
                 group_actions = []
-                for group_index, log_probs, _, action_embeddings, actions, _, _ in results:
+                for group_index, log_probs, _, action_embeddings, actions, _, _ in results: # during the validation, here may be more results due to the beam size. It will keep more results.
                     if not actions:
                         continue
 
@@ -508,13 +509,18 @@ class AttendPastSchemaItemsTransitionFunction(BasicTransitionFunction):
                 # If the allowed_actions is both action_1 and action_2, then will get the two action. 
                 # But we only keep one action in training, so finally we will only keep the action_2 and we will get a small loss.
                 # It look like the decoder trainer (in MaximumMarginalLikelihood.py) will make the negative loss value become positive. 
+                # Notice-2:
+                # Notice-2:
+                # The length of allowed_act_in_one_case is always (maybe mostly) 1 during training. But it will be longer during test and validation.
+                # Actually in training, here filter the incorrect action.
+                # In validation, due to allowed_actions is none, so it will filter any action. 
                 allowed_act_in_one_case = [(log_probs_cpu[i],
                                  group_indices[i],
                                  log_probs[i],
                                  action_embeddings[i],
                                  group_actions[i])
                                 for i in range(len(group_actions))
-                                if (not allowed_actions or
+                                if (not allowed_actions or # during validation, the allowed_actions is None. So not allowed_actions is always true.
                                     group_actions[i] in allowed_actions[group_indices[i]])]
 
                 # We use a key here to make sure we're not trying to compare anything on the GPU.

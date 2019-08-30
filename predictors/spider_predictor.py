@@ -20,6 +20,10 @@ class WikiTablesParserPredictor(Predictor):
             # line must not be empty for the evaluator to consider it
             predicted_sql_query = 'NO PREDICTION'
         json_output['predicted_sql_query'] = predicted_sql_query
+
+        if 'beam_sql_query' in outputs.keys() and outputs['beam_sql_query']:
+            json_output['beam_sql_query'] = outputs['beam_sql_query']
+            
         return sanitize(json_output)
 
     @overrides
@@ -28,4 +32,7 @@ class WikiTablesParserPredictor(Predictor):
         If you don't want your outputs in JSON-lines format
         you can override this function to output them differently.
         """
-        return outputs['predicted_sql_query'] + "\n"
+        if 'beam_sql_query' in outputs.keys():
+            return outputs['predicted_sql_query'] + "\n" + outputs['beam_sql_query'] + "\n"
+        else:
+            return outputs['predicted_sql_query'] + "\n"
