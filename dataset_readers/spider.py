@@ -18,6 +18,8 @@ from dataset_readers.fields.knowledge_graph_field import SpiderKnowledgeGraphFie
 from semparse.contexts.spider_db_context import SpiderDBContext
 from semparse.worlds.spider_world import SpiderWorld
 
+import pickle
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,7 +31,7 @@ class SpiderDatasetReader(DatasetReader):
                  keep_if_unparsable: bool = True,
                  tables_file: str = None,
                  dataset_path: str = 'dataset/database',
-                 load_cache: bool = True,
+                 load_cache: bool = False,
                  save_cache: bool = False,
                  loading_limit = -1):
         
@@ -62,6 +64,7 @@ class SpiderDatasetReader(DatasetReader):
         self._save_cache = save_cache
         self._loading_limit = loading_limit
 
+        self._concept_word = pickle.load(open(os.path.join("data/total_conceptnet_20kw.pkl"),'rb'))
         # when finishing the __init__(), it will automatically run the _read()
 
     @overrides
@@ -82,6 +85,8 @@ class SpiderDatasetReader(DatasetReader):
             for total_cnt, ex in enumerate(json_obj):
                 cache_filename = f'instance-{total_cnt}.pt'
                 cache_filepath = os.path.join(cache_dir, cache_filename)
+                # if total_cnt != 225:
+                #     continue
                 if self._loading_limit == cnt:
                     break
 
@@ -133,6 +138,10 @@ class SpiderDatasetReader(DatasetReader):
 
                 if ins is not None:
                     yield ins
+                else:
+                    print("???")
+
+            # print(total_cnt)
 
     def text_to_instance(self,
                          utterance: str, # question
@@ -152,7 +161,8 @@ class SpiderDatasetReader(DatasetReader):
                                                 self._utterance_token_indexers,
                                                 entity_tokens=db_context.entity_tokens,
                                                 include_in_vocab=False,  # TODO: self._use_table_for_vocab,
-                                                max_table_tokens=None)  # self._max_table_tokens)
+                                                max_table_tokens=None,
+                                                conceptnet=self._concept_word)  # self._max_table_tokens)
 
         world = SpiderWorld(db_context, query=sql)
 
@@ -199,7 +209,7 @@ class SpiderDatasetReader(DatasetReader):
                 index_fields.append(IndexField(action_map[production_rule], valid_actions_field))
         else: # action_sequence is None, which means: our grammar for the query is error.
             index_fields = [IndexField(-1, valid_actions_field)]
-            assert False # gan ???
+            # assert False # gan ???
         action_sequence_field = ListField(index_fields)
 
 
